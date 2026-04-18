@@ -28,7 +28,5 @@
       "dangerousDisableAssetCspModification": false
     }
   },
-  "plugins": {
-    "store": {}
-  }
+  "plugins": {}
 }
