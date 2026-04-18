@@ -16,6 +16,45 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::default().build())
+        .on_page_load(|webview, payload| {
+            use tauri::webview::PageLoadEvent;
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                // Inject script to handle target="_blank" links and window.open()
+                // so they navigate in the same window instead of opening new windows
+                // (WKWebView silently ignores new-window requests by default)
+                let _ = webview.eval(r#"
+                    (function() {
+                        if (window.__wiki3NavHandler) return;
+                        window.__wiki3NavHandler = true;
+
+                        // Intercept target="_blank" link clicks
+                        document.addEventListener('click', function(e) {
+                            var link = e.target.closest('a[target="_blank"], a[target="_new"]');
+                            if (link && link.href) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                window.location.href = link.href;
+                            }
+                        }, true);
+
+                        // Override window.open to navigate in same window for trusted origins
+                        var _open = window.open;
+                        window.open = function(url) {
+                            if (url) {
+                                try {
+                                    var u = new URL(url, window.location.href);
+                                    if (u.origin === 'https://wiki3.ai' || u.origin === 'https://www.wiki3.ai') {
+                                        window.location.href = u.href;
+                                        return null;
+                                    }
+                                } catch(e) {}
+                            }
+                            return _open.apply(window, arguments);
+                        };
+                    })();
+                "#);
+            }
+        })
         .setup(|app| {
             let data_dir = app
                 .path()
