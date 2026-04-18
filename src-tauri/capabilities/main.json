@@ -1,5 +1,4 @@
 {
-  "$schema": "https://raw.githubusercontent.com/nicegram/nicegram-desktop/main/src-tauri/gen/schemas/desktop-schema.json",
   "identifier": "wiki3-main",
   "description": "Main window capabilities for Wiki3 desktop app",
   "windows": ["main"],
