@@ -1,0 +1,21 @@
+[package]
+name = "wiki3-app"
+version = "0.1.0"
+description = "Desktop app for running Wiki3.ai sites"
+authors = ["Wiki3"]
+edition = "2021"
+
+[lib]
+name = "wiki3_app_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-store = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+env_logger = "0.11"
