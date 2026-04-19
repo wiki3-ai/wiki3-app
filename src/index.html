@@ -272,20 +272,16 @@
     <div class="w3-topbar">
       <div class="w3-topbar-left">
         <h1>Wiki3</h1>
-        <nav class="w3-topbar-nav" id="main-nav">
-          <button data-view="workspaces" class="active">Workspaces</button>
-          <button data-view="auth">Account</button>
-        </nav>
       </div>
-      <div class="w3-auth-indicator" id="auth-indicator">
-        <span class="w3-auth-dot disconnected"></span>
-        <span>Not connected</span>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="text" id="repo-url-input" value="https://github.com/wiki3-ai/wiki3-ai-site" placeholder="GitHub repo URL (e.g. https://github.com/wiki3-ai/wiki3-ai-site)" style="width:420px;padding:6px 10px;border:1px solid #d0d0d0;border-radius:6px;font-size:13px;" />
+        <button class="w3-btn w3-btn-primary" id="open-repo-btn" style="padding:6px 14px;white-space:nowrap;">Open Site</button>
       </div>
     </div>
     <div class="w3-main" id="main-content">
-      <div class="w3-loading">
-        <div class="spinner"></div>
-        <p>Loading...</p>
+      <div class="w3-empty">
+        <h2>Welcome to Wiki3</h2>
+        <p>Enter a GitHub repo URL above and click <strong>Open Site</strong> to view its published site.</p>
       </div>
     </div>
     <script type="module" src="./main.ts"></script>

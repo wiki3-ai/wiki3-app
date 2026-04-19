@@ -578,7 +578,70 @@ pub async fn open_local_workspace(
     Ok(workspace)
 }
 
-/// Parse owner/repo from a GitHub URL.
+/// Resolve a GitHub repo URL to its Pages site URL and open it in a new window.
+///
+/// Accepts URLs like:
+///   - https://github.com/wiki3-ai/wiki3-ai-site
+///   - git@github.com:wiki3-ai/wiki3-ai-site.git
+///
+/// First tries the GitHub Pages API (requires auth) to get the actual site URL
+/// (including custom domains). Falls back to the convention-based URL.
+#[command]
+pub async fn open_repo_site(app: AppHandle, repo_url: String) -> Result<serde_json::Value, String> {
+    let (owner, repo) = parse_github_url(&repo_url)
+        .ok_or_else(|| format!("Could not parse GitHub owner/repo from: {}", repo_url))?;
+
+    let state = app.state::<PublishingState>();
+
+    // Try GitHub Pages API first (gives us custom domains like wiki3.ai)
+    let site_url = match resolve_pages_url(&state.auth(), &owner, &repo).await {
+        Ok(url) => url,
+        Err(_) => {
+            // Fall back to convention: owner.github.io/repo
+            let provider = state.publish_provider();
+            provider.site_url(&owner, &repo)
+        }
+    };
+
+    log::info!("Resolved {}/{} → {}", owner, repo, site_url);
+
+    // Open the site in a new window via the existing command
+    crate::commands::open_new_window(app, site_url.clone())
+        .map_err(|e| format!("Failed to open window: {}", e))?;
+
+    Ok(serde_json::json!({
+        "owner": owner,
+        "repo": repo,
+        "site_url": site_url,
+    }))
+}
+
+/// Fetch the actual GitHub Pages URL for a repo (may include custom domain).
+async fn resolve_pages_url(auth: &GitHubAuth, owner: &str, repo: &str) -> Result<String, String> {
+    use super::providers::github::auth::build_github_client;
+
+    let token = auth.get_token().map_err(|e| e.to_string())?;
+    let client = build_github_client(&token).map_err(|e| e.to_string())?;
+
+    let api_url = format!("https://api.github.com/repos/{owner}/{repo}/pages");
+    let resp = client
+        .get(&api_url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !resp.status().is_success() {
+        return Err(format!("Pages API returned {}", resp.status()));
+    }
+
+    let pages: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+
+    pages
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "No html_url in Pages response".to_string())
+}
 fn parse_github_url(url: &str) -> Option<(String, String)> {
     // Handle https://github.com/owner/repo.git
     // Handle git@github.com:owner/repo.git

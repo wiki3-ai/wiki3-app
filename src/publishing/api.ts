@@ -163,3 +163,37 @@ export async function detectPublishMode(workspaceId: string): Promise<PublishMod
 export async function openLocalWorkspace(localPath: string): Promise<Workspace> {
   return invoke<Workspace>('open_local_workspace', { localPath });
 }
+
+// =============================================================================
+// Open site from repo URL
+// =============================================================================
+
+/** Resolve a GitHub repo URL to its Pages site and open it in a new window. */
+export async function openRepoSite(repoUrl: string): Promise<{ owner: string; repo: string; site_url: string }> {
+  return invoke<{ owner: string; repo: string; site_url: string }>('open_repo_site', { repoUrl });
+}
+
+// =============================================================================
+// Settings
+// =============================================================================
+
+export interface AppSettings {
+  restore_windows: boolean;
+  default_repo_url: string;
+}
+
+/** Get the current app settings. */
+export async function getSettings(): Promise<AppSettings> {
+  return invoke<AppSettings>('get_settings');
+}
+
+/** Update app settings (partial). Returns the full updated settings. */
+export async function updateSettings(
+  restoreWindows?: boolean,
+  defaultRepoUrl?: string,
+): Promise<AppSettings> {
+  return invoke<AppSettings>('update_settings', {
+    restoreWindows: restoreWindows ?? null,
+    defaultRepoUrl: defaultRepoUrl ?? null,
+  });
+}

@@ -4,7 +4,9 @@ Desktop (Mobile planned) App for running Wiki3.ai sites.
 
 ## Overview
 
-Wiki3 for Mac is a macOS desktop app built with **Tauri 2** that opens the [wiki3.ai](https://wiki3.ai) JupyterLite site, preserves the user's local JupyterLite state across app launches, and supports **Open**, **Run**, and **Publish** flows using the existing JupyterLab/JupyterLite platform.
+Wiki3 for Mac is a macOS desktop app built with **Tauri 2**. On launch it shows a **dashboard** where the user can open any GitHub-hosted Wiki3 site by pasting a repo URL. Each site opens in its own window. Open windows are restored across app launches.
+
+The app also supports **Open**, **Run**, and **Publish** flows using the existing JupyterLab/JupyterLite platform, with desktop permission gating and persistent local state.
 
 ## Architecture
 
@@ -14,9 +16,11 @@ The app consists of four modular layers:
 
 The Rust backend that provides:
 
-- macOS desktop app window loading the trusted wiki3.ai URL
-- Persistent app data directory for execution policy state
-- Origin-based trust verification
+- Dashboard main window with repo URL input for opening sites
+- Site windows opened from GitHub repo URLs (resolved via GitHub Pages API)
+- Window state persistence — open site windows are restored on next launch
+- Persistent app data directory for execution policy state and settings
+- Origin-based trust verification (wiki3.ai and *.github.io)
 - Tauri commands exposed to the frontend for desktop integration
 
 ### 2. Desktop Host Layer (`src-tauri/src/`)
@@ -26,7 +30,8 @@ Rust modules implementing the desktop host capabilities:
 - **`config.rs`** — App configuration, trusted origin allowlist, dev URL override
 - **`permissions.rs`** — Execution permission model (allow once / allow always / deny) and execution policy
 - **`host.rs`** — Desktop host state management with persistent policy storage
-- **`commands.rs`** — Tauri commands: host detection, permission state, execution policy
+- **`commands.rs`** — Tauri commands: host detection, permission state, execution policy, new window management, app settings
+- **`window_state.rs`** — Window state persistence (open site windows, app settings) across app launches
 
 ### 3. Publishing & Workspace Layer (`src-tauri/src/`)
 
@@ -52,23 +57,25 @@ TypeScript modules for desktop integration and publishing UI:
 - **`permission-dialog.ts`** — UI for requesting user permission before enabling execution
 - **`types.ts`** — TypeScript type definitions for the integration layer
 
-#### Publishing UI (`src/publishing/`)
+#### Dashboard (`src/main.ts`, `src/index.html`)
+
+- **`main.ts`** — Dashboard entry point: loads saved settings, handles repo URL input and Open Site action
+- **`index.html`** — Dashboard layout with repo URL bar (prepopulated with default repo URL)
+
+#### Publishing API (`src/publishing/`)
 
 - **`types.ts`** — Frontend types mirroring the Rust workspace/git models
-- **`api.ts`** — Typed wrappers for all publishing Tauri commands
-- **`ui/auth-panel.ts`** — GitHub token setup and authentication status
-- **`ui/workspace-panel.ts`** — Workspace list, actions, and navigation
-- **`ui/new-site-dialog.ts`** — "New Site from Template" dialog
-- **`ui/fork-dialog.ts`** — "Fork Existing Site" dialog
-- **`ui/commit-push-panel.ts`** — Git status, commit, push interface
-- **`ui/publish-panel.ts`** — Site publish mode detection and publish trigger
+- **`api.ts`** — Typed wrappers for all Tauri commands (publishing, settings, open-from-repo)
 
 ## Features
 
-- **Open**: Loads wiki3.ai in the desktop window, detects host presence, restores local state
+- **Dashboard**: Main window with repo URL input prepopulated with the default site (`wiki3-ai/wiki3-ai-site`)
+- **Open from Repo URL**: Paste any GitHub repo URL → the app resolves its GitHub Pages URL (via API, with custom domain support) and opens the site in a new window
+- **Window Restore**: Site windows open at quit are automatically restored on next launch (configurable via `restore_windows` setting)
+- **New Window Handling**: Links with `target="_blank"` and `window.open()` on wiki3.ai pages are intercepted and opened in real app windows (WKWebView workaround)
 - **Run**: Enables notebook/cell execution through JupyterLite kernels (Pyodide/WASM Python, JavaScript) with desktop permission gating
 - **Persistence**: JupyterLite IndexedDB/localStorage state survives app quit and relaunch
-- **Security**: Trusted origin allowlist restricts desktop capabilities to wiki3.ai only
+- **Security**: Trusted origin allowlist restricts desktop capabilities to wiki3.ai and *.github.io
 - **Permission Gating**: User must approve execution (allow once / allow always / deny) before Run is enabled
 - **Create from Template**: Create a new repo from `wiki3-ai/wiki3-ai-template`, clone, and open
 - **Fork**: Fork any repo, poll until ready, clone with upstream remote
@@ -152,6 +159,12 @@ Potential future providers:
 npm install
 ```
 
+### Run
+
+```bash
+npm run tauri:dev
+```
+
 ### Development with dev URL
 
 ```bash
@@ -184,6 +197,13 @@ npm run typecheck
 | Production URL | Trusted wiki3.ai site | `https://wiki3.ai` |
 | App data directory | Persistent state location | OS-specific app data dir |
 | Workspaces directory | Default location for cloned sites | `~/Wiki3Sites/` |
+
+### App Settings (persisted in `window_state.json`)
+
+| Setting | Description | Default |
+|---|---|---|
+| `restore_windows` | Reopen site windows from previous session on launch | `true` |
+| `default_repo_url` | Prepopulated repo URL in the dashboard input | `https://github.com/wiki3-ai/wiki3-ai-site` |
 
 ## License
 

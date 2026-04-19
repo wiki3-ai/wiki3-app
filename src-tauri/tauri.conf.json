@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Wiki3",
+        "title": "Wiki3 — Dashboard",
         "width": 1100,
         "height": 750,
         "minWidth": 800,
@@ -28,7 +28,5 @@
       "dangerousDisableAssetCspModification": false
     }
   },
-  "plugins": {
-    "dialog": {}
-  }
+  "plugins": {}
 }

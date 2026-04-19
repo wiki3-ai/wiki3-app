@@ -5,17 +5,20 @@ pub mod host;
 pub mod permissions;
 pub mod providers;
 pub mod publishing_commands;
+pub mod window_state;
 pub mod workspace;
 
 use tauri::Manager;
 
 use crate::host::DesktopHostState;
 use crate::publishing_commands::PublishingState;
+use crate::window_state::WindowStateManager;
 
 /// Build and configure the Tauri application.
 ///
 /// The main window loads the local dashboard UI (index.html).
-/// Site windows (wiki3.ai) are opened in separate windows on demand.
+/// Site windows (wiki3.ai) are opened in separate windows on demand,
+/// and restored from the previous session if the setting is enabled.
 pub fn run() {
     env_logger::init();
 
@@ -80,17 +83,67 @@ pub fn run() {
             let host_state = DesktopHostState::new(data_dir.clone());
 
             // Initialize publishing state
-            let publishing_state = PublishingState::new(data_dir);
+            let publishing_state = PublishingState::new(data_dir.clone());
 
-            // Store the host state in Tauri's managed state
+            // Initialize window state manager (persists open windows + settings)
+            let window_state = WindowStateManager::new(data_dir);
+
+            // Store states in Tauri's managed state
             app.manage(host_state);
             app.manage(publishing_state);
+            app.manage(window_state);
 
-            // Main window stays on the local dashboard (index.html).
-            // No navigation to wiki3.ai — the dashboard lets users manage
-            // workspaces and open site windows when needed.
+            // Restore site windows from the previous session
+            let ws = app.state::<WindowStateManager>();
+            if ws.should_restore() {
+                let saved = ws.saved_windows();
+                if !saved.is_empty() {
+                    log::info!("Restoring {} window(s) from previous session", saved.len());
+                    let handle = app.handle().clone();
+                    for geom in saved {
+                        if let Err(e) = crate::commands::open_new_window_with_geometry(
+                            handle.clone(),
+                            geom.url,
+                            Some(geom.x),
+                            Some(geom.y),
+                            Some(geom.width),
+                            Some(geom.height),
+                        ) {
+                            log::warn!("Failed to restore window: {}", e);
+                        }
+                    }
+                }
+            }
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            let label = window.label().to_string();
+            if !label.starts_with("wiki3-") {
+                return;
+            }
+            let state = match window.app_handle().try_state::<WindowStateManager>() {
+                Some(s) => s,
+                None => return,
+            };
+            match event {
+                tauri::WindowEvent::Destroyed => {
+                    state.remove_window(&label);
+                }
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    // Persist current position and size
+                    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
+                        state.update_window_geometry(
+                            &label,
+                            pos.x as f64,
+                            pos.y as f64,
+                            size.width as f64,
+                            size.height as f64,
+                        );
+                    }
+                }
+                _ => {}
+            }
         })
         .invoke_handler(tauri::generate_handler![
             commands::detect_desktop_host,
@@ -114,6 +167,9 @@ pub fn run() {
             publishing_commands::publish_site,
             publishing_commands::detect_workspace_publish_mode,
             publishing_commands::open_local_workspace,
+            publishing_commands::open_repo_site,
+            commands::get_settings,
+            commands::update_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
