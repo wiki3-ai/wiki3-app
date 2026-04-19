@@ -1,42 +1,64 @@
 /**
  * Wiki3 Desktop App — Main Entry Point
  *
- * This is the initial page loaded by the Tauri webview.
- * The Tauri setup handler immediately navigates the window to wiki3.ai,
- * so this page is only shown briefly as a loading screen.
- *
- * When wiki3.ai loads, the desktop extension (injected as part of the
- * JupyterLite site build or via content script) initializes the
- * desktop integration bridge.
+ * Dashboard page that stays in the main window. Shows a repo URL input
+ * (prepopulated with the saved default) so the user can open a GitHub
+ * repo's published site in a new window.
  */
 
-console.log('[wiki3-app] Loading...');
-
-// The Tauri backend navigates the main window to wiki3.ai during setup.
-// This script only handles the brief loading state and any error display.
+import * as api from './publishing/api';
 
 async function init(): Promise<void> {
-  try {
-    // Check if Tauri API is available
-    const internals = (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
-    if (internals) {
-      console.log('[wiki3-app] Tauri desktop host detected, waiting for navigation...');
-    } else {
-      console.log('[wiki3-app] Running outside Tauri (standalone mode).');
-      showError('This page is intended to run inside the Wiki3 desktop app.');
-    }
-  } catch (err) {
-    console.error('[wiki3-app] Initialization error:', err);
-    showError('Failed to initialize. Please restart the app.');
-  }
-}
+  console.log('[wiki3-app] Dashboard loading...');
 
-function showError(message: string): void {
-  const el = document.getElementById('error-message');
-  if (el) {
-    el.textContent = message;
-    el.style.display = 'block';
+  const repoInput = document.getElementById('repo-url-input') as HTMLInputElement | null;
+  const openBtn = document.getElementById('open-repo-btn') as HTMLButtonElement | null;
+  const mainContent = document.getElementById('main-content');
+
+  if (!repoInput || !openBtn) return;
+
+  // Load saved settings and apply the default repo URL
+  try {
+    const settings = await api.getSettings();
+    if (settings.default_repo_url) {
+      repoInput.value = settings.default_repo_url;
+    }
+  } catch {
+    // Settings not available — keep the hardcoded default from HTML
   }
+
+  async function handleOpenRepo(): Promise<void> {
+    const url = repoInput!.value.trim();
+    if (!url) return;
+
+    openBtn!.disabled = true;
+    openBtn!.textContent = 'Opening...';
+
+    try {
+      const result = await api.openRepoSite(url);
+      if (mainContent) {
+        mainContent.innerHTML = `<div style="text-align:center;padding:40px;color:#666;">
+          <p>Opened <strong>${result.owner}/${result.repo}</strong></p>
+          <p style="font-size:13px;">${result.site_url}</p>
+        </div>`;
+      }
+      openBtn!.disabled = false;
+      openBtn!.textContent = 'Open Site';
+    } catch (err) {
+      if (mainContent) {
+        mainContent.innerHTML = `<div style="text-align:center;padding:40px;">
+          <p style="color:#cc3300;">Failed to open: ${err}</p>
+        </div>`;
+      }
+      openBtn!.disabled = false;
+      openBtn!.textContent = 'Open Site';
+    }
+  }
+
+  openBtn.addEventListener('click', handleOpenRepo);
+  repoInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') handleOpenRepo();
+  });
 }
 
 init();

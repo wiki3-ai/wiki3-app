@@ -15,56 +15,274 @@
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         background: #f8f9fa;
         color: #1a1a2e;
+        min-height: 100vh;
+      }
+
+      /* ── Top bar ── */
+      .w3-topbar {
         display: flex;
         align-items: center;
-        justify-content: center;
-        height: 100vh;
-        overflow: hidden;
+        justify-content: space-between;
+        padding: 10px 20px;
+        background: #fff;
+        border-bottom: 1px solid #e0e0e0;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+      }
+      .w3-topbar-left {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      .w3-topbar h1 {
+        font-size: 18px;
+        font-weight: 700;
+        color: #1a1a2e;
+      }
+      .w3-topbar-nav {
+        display: flex;
+        gap: 4px;
+      }
+      .w3-topbar-nav button {
+        padding: 6px 14px;
+        border: none;
+        border-radius: 6px;
+        background: transparent;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: #555;
+        transition: background 0.15s, color 0.15s;
+      }
+      .w3-topbar-nav button:hover {
+        background: #f0f0f0;
+      }
+      .w3-topbar-nav button.active {
+        background: #0066cc;
+        color: #fff;
       }
 
-      .loader {
+      /* ── Auth indicator in top bar ── */
+      .w3-auth-indicator {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #555;
+      }
+      .w3-auth-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        display: inline-block;
+      }
+      .w3-auth-dot.connected { background: #4caf50; }
+      .w3-auth-dot.disconnected { background: #ff9800; }
+
+      /* ── Main content ── */
+      .w3-main {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 24px 20px;
+      }
+
+      /* ── Loading state ── */
+      .w3-loading {
         text-align: center;
+        padding: 60px 20px;
+        color: #888;
       }
-
-      .loader h1 {
-        font-size: 24px;
-        font-weight: 600;
-        margin-bottom: 12px;
-      }
-
-      .loader p {
-        font-size: 14px;
-        color: #666;
-      }
-
-      .spinner {
-        width: 40px;
-        height: 40px;
+      .w3-loading .spinner {
+        width: 32px;
+        height: 32px;
         border: 3px solid #e0e0e0;
         border-top-color: #0066cc;
         border-radius: 50%;
         animation: spin 0.8s linear infinite;
-        margin: 0 auto 16px;
+        margin: 0 auto 12px;
       }
-
       @keyframes spin {
         to { transform: rotate(360deg); }
       }
 
-      .error {
-        color: #cc3300;
-        display: none;
-        margin-top: 16px;
+      /* ── Global component styles ── */
+      .w3-panel { padding: 0; }
+      .w3-panel h2 { margin: 0 0 16px; font-size: 20px; font-weight: 600; }
+      .w3-panel h3 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
+      .w3-muted { color: #666; }
+      .w3-error { color: #cc3300; }
+      .w3-actions { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+      .w3-btn {
+        padding: 8px 16px;
+        border: 1px solid #d0d0d0;
+        border-radius: 6px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        transition: background 0.15s;
+      }
+      .w3-btn:hover { background: #f0f0f0; }
+      .w3-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      .w3-btn-primary { background: #0066cc; color: #fff; border-color: #0066cc; }
+      .w3-btn-primary:hover { background: #0055aa; }
+      .w3-btn-danger { color: #cc3300; border-color: #cc3300; }
+      .w3-btn-danger:hover { background: #fff0f0; }
+      .w3-btn-sm { padding: 4px 10px; font-size: 12px; }
+
+      /* ── Cards ── */
+      .w3-workspace-list { display: flex; flex-direction: column; gap: 12px; }
+      .w3-workspace-card {
+        padding: 16px;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background: #fff;
+        transition: box-shadow 0.15s;
+      }
+      .w3-workspace-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+      .w3-ws-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+      .w3-ws-provider { font-size: 11px; text-transform: uppercase; color: #888; background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }
+      .w3-ws-meta { display: flex; gap: 12px; font-size: 13px; color: #555; margin-bottom: 6px; flex-wrap: wrap; }
+      .w3-ws-branch { background: #e8f5e9; padding: 1px 6px; border-radius: 3px; color: #2e7d32; font-size: 12px; }
+      .w3-ws-mode { background: #e3f2fd; padding: 1px 6px; border-radius: 3px; color: #1565c0; font-size: 12px; }
+      .w3-ws-url { font-size: 12px; color: #0066cc; display: block; margin-bottom: 8px; text-decoration: none; }
+      .w3-ws-url:hover { text-decoration: underline; }
+      .w3-ws-path { font-size: 12px; color: #888; font-family: monospace; margin-bottom: 8px; display: block; }
+      .w3-ws-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+
+      /* ── Dialog overlay ── */
+      .w3-dialog-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.4);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10000;
+      }
+      .w3-dialog {
+        background: #fff;
+        border-radius: 12px;
+        padding: 24px;
+        width: 460px;
+        max-width: 90vw;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      }
+      .w3-dialog h3 { margin: 0 0 16px; font-size: 18px; }
+      .w3-form label { display: block; margin-bottom: 12px; font-size: 13px; color: #333; font-weight: 500; }
+      .w3-form input, .w3-form select, .w3-form textarea {
+        display: block;
+        width: 100%;
+        margin-top: 4px;
+        padding: 8px 10px;
+        border: 1px solid #d0d0d0;
+        border-radius: 6px;
+        font-size: 14px;
+        box-sizing: border-box;
+        font-family: inherit;
+      }
+      .w3-form input:focus, .w3-form select:focus, .w3-form textarea:focus {
+        outline: none;
+        border-color: #0066cc;
+        box-shadow: 0 0 0 2px rgba(0,102,204,0.2);
+      }
+      .w3-dialog-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+      .w3-dialog-status {
+        margin-top: 12px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        background: #e8f5e9;
         font-size: 13px;
       }
+      .w3-dialog-status.w3-error { background: #ffebee; color: #c62828; }
+
+      /* ── Auth panel ── */
+      .w3-auth-section {
+        padding: 16px;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background: #fff;
+        margin-bottom: 20px;
+      }
+      .w3-auth-badge {
+        font-size: 12px;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 4px;
+        display: inline-block;
+        margin-bottom: 8px;
+      }
+      .w3-auth-ok { background: #e8f5e9; color: #2e7d32; }
+      .w3-auth-none { background: #fff3e0; color: #e65100; }
+
+      /* ── Git status ── */
+      .w3-status-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
+      .w3-ahead { color: #2e7d32; font-weight: 600; font-size: 13px; }
+      .w3-behind { color: #c62828; font-weight: 600; font-size: 13px; }
+      .w3-file-count { color: #666; font-size: 13px; }
+      .w3-file-list { margin: 8px 0 16px; max-height: 200px; overflow-y: auto; border: 1px solid #e0e0e0; border-radius: 6px; }
+      .w3-file-item { display: flex; gap: 8px; padding: 6px 10px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+      .w3-file-item:last-child { border-bottom: none; }
+      .w3-file-status { font-size: 11px; text-transform: uppercase; padding: 1px 6px; border-radius: 3px; font-weight: 600; }
+      .w3-status-modified { background: #fff3e0; color: #e65100; }
+      .w3-status-added { background: #e8f5e9; color: #2e7d32; }
+      .w3-status-deleted { background: #ffebee; color: #c62828; }
+      .w3-status-untracked { background: #f3e5f5; color: #7b1fa2; }
+      .w3-status-renamed { background: #e3f2fd; color: #1565c0; }
+      .w3-file-path { font-family: monospace; font-size: 12px; }
+      .w3-last-commit { font-size: 13px; color: #555; margin: 12px 0; padding: 8px; background: #f5f5f5; border-radius: 6px; }
+      .w3-last-commit code { background: #e0e0e0; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+      .w3-commit-form { margin-top: 16px; }
+      .w3-input {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #d0d0d0;
+        border-radius: 6px;
+        font-size: 14px;
+        margin-bottom: 8px;
+        box-sizing: border-box;
+      }
+      .w3-input:focus { outline: none; border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0,102,204,0.2); }
+
+      /* ── Publish info ── */
+      .w3-publish-info { margin-bottom: 16px; }
+      .w3-publish-row { display: flex; gap: 12px; padding: 6px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+      .w3-publish-label { font-weight: 600; min-width: 110px; color: #555; }
+      .w3-publish-row a { color: #0066cc; text-decoration: none; }
+      .w3-publish-row a:hover { text-decoration: underline; }
+
+      /* ── Back button ── */
+      .w3-back { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 16px; color: #0066cc; cursor: pointer; font-size: 13px; background: none; border: none; padding: 0; }
+      .w3-back:hover { text-decoration: underline; }
+
+      /* ── Empty state ── */
+      .w3-empty {
+        text-align: center;
+        padding: 48px 20px;
+        color: #888;
+      }
+      .w3-empty h2 { color: #1a1a2e; margin-bottom: 8px; }
+      .w3-empty p { margin-bottom: 24px; font-size: 14px; }
     </style>
   </head>
   <body>
-    <div class="loader">
-      <div class="spinner"></div>
-      <h1>Wiki3</h1>
-      <p>Loading wiki3.ai...</p>
-      <p class="error" id="error-message"></p>
+    <div class="w3-topbar">
+      <div class="w3-topbar-left">
+        <h1>Wiki3</h1>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <input type="text" id="repo-url-input" value="https://github.com/wiki3-ai/wiki3-ai-site" placeholder="GitHub repo URL (e.g. https://github.com/wiki3-ai/wiki3-ai-site)" style="width:420px;padding:6px 10px;border:1px solid #d0d0d0;border-radius:6px;font-size:13px;" />
+        <button class="w3-btn w3-btn-primary" id="open-repo-btn" style="padding:6px 14px;white-space:nowrap;">Open Site</button>
+      </div>
+    </div>
+    <div class="w3-main" id="main-content">
+      <div class="w3-empty">
+        <h2>Welcome to Wiki3</h2>
+        <p>Enter a GitHub repo URL above and click <strong>Open Site</strong> to view its published site.</p>
+      </div>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>
