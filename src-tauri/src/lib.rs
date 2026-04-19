@@ -1,11 +1,16 @@
 pub mod commands;
 pub mod config;
+pub mod git;
 pub mod host;
 pub mod permissions;
+pub mod providers;
+pub mod publishing_commands;
+pub mod workspace;
 
 use tauri::Manager;
 
 use crate::host::DesktopHostState;
+use crate::publishing_commands::PublishingState;
 
 /// Build and configure the Tauri application.
 ///
@@ -70,7 +75,10 @@ pub fn run() {
             log::info!("App data directory: {:?}", data_dir);
 
             // Initialize desktop host state
-            let host_state = DesktopHostState::new(data_dir);
+            let host_state = DesktopHostState::new(data_dir.clone());
+
+            // Initialize publishing state
+            let publishing_state = PublishingState::new(data_dir);
 
             // Get the effective URL to load
             let site_url = host_state
@@ -83,6 +91,7 @@ pub fn run() {
 
             // Store the host state in Tauri's managed state
             app.manage(host_state);
+            app.manage(publishing_state);
 
             // Navigate the main window to the wiki3.ai site
             if let Some(window) = app.get_webview_window("main") {
@@ -104,6 +113,21 @@ pub fn run() {
             commands::get_execution_state,
             commands::get_app_config,
             commands::open_new_window,
+            publishing_commands::store_github_token,
+            publishing_commands::get_auth_status,
+            publishing_commands::clear_github_auth,
+            publishing_commands::list_workspaces,
+            publishing_commands::get_workspace,
+            publishing_commands::remove_workspace,
+            publishing_commands::create_site_from_template,
+            publishing_commands::fork_site,
+            publishing_commands::get_git_status,
+            publishing_commands::commit_changes,
+            publishing_commands::push_changes,
+            publishing_commands::commit_and_push,
+            publishing_commands::publish_site,
+            publishing_commands::detect_workspace_publish_mode,
+            publishing_commands::open_local_workspace,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
