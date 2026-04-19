@@ -533,9 +533,9 @@ pub async fn open_local_workspace(
             "No 'origin' remote found. Please add a GitHub remote first.".to_string(),
         );
     } else {
-        return Err(format!(
-            "Could not parse GitHub owner/repo from remote URL: {origin_url}"
-        ));
+        return Err(
+            "Could not parse GitHub owner/repo from the origin remote URL. Expected a github.com URL.".to_string(),
+        );
     };
 
     let branch = git::current_branch(&local_path)

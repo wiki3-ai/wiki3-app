@@ -258,7 +258,7 @@ impl GitHubPagesPublishProvider {
         }
 
         // Remove .git from copied content if it got copied
-        let dot_git = Path::new(&temp_path).join(".git-source");
+        let dot_git = Path::new(&temp_path).join(".git");
         let _ = std::fs::remove_dir_all(dot_git);
 
         // Set git user for the temp repo
