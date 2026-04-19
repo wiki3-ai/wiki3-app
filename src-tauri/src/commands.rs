@@ -1,7 +1,14 @@
-use tauri::{command, AppHandle, State};
+use std::sync::atomic::{AtomicU32, Ordering};
 
+use tauri::{command, AppHandle, State};
+use tauri::webview::WebviewWindowBuilder;
+
+use crate::config;
 use crate::host::DesktopHostState;
 use crate::permissions::PermissionChoice;
+
+/// Counter for generating unique window labels.
+static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
 
 /// Detect whether the app is running as a desktop host.
 /// Returns host information if called from a trusted origin.
@@ -121,4 +128,41 @@ pub fn get_app_config(
         "trusted_origins": config.trusted_origins,
         "version": env!("CARGO_PKG_VERSION"),
     }))
+}
+
+/// Open a URL in a new app window. Only allows trusted wiki3.ai origins.
+#[command]
+pub fn open_new_window(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed: tauri::Url = url.parse().map_err(|e: <tauri::Url as std::str::FromStr>::Err| e.to_string())?;
+
+    // Verify the URL is from a trusted origin
+    let host = parsed.host_str().unwrap_or("");
+    let is_trusted = host == "wiki3.ai" || host.ends_with(".wiki3.ai");
+
+    // Also allow the dev URL origin when set
+    let is_dev = std::env::var(config::DEV_URL_ENV)
+        .ok()
+        .and_then(|dev| dev.parse::<tauri::Url>().ok())
+        .map(|dev_parsed| {
+            parsed.host() == dev_parsed.host()
+                && parsed.port() == dev_parsed.port()
+                && parsed.scheme() == dev_parsed.scheme()
+        })
+        .unwrap_or(false);
+
+    if !is_trusted && !is_dev {
+        return Err(format!("Refusing to open untrusted URL: {}", url));
+    }
+
+    let n = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let label = format!("wiki3-{}", n);
+
+    WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
+        .title("Wiki3")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(800.0, 600.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

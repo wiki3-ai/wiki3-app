@@ -19,13 +19,19 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             use tauri::webview::PageLoadEvent;
             if matches!(payload.event(), PageLoadEvent::Finished) {
-                // Inject script to handle target="_blank" links and window.open()
-                // so they navigate in the same window instead of opening new windows
+                // Inject script to intercept target="_blank" links and window.open()
+                // and route them through a Tauri command that creates new app windows
                 // (WKWebView silently ignores new-window requests by default)
                 let _ = webview.eval(r#"
                     (function() {
                         if (window.__wiki3NavHandler) return;
                         window.__wiki3NavHandler = true;
+
+                        function openInNewWindow(href) {
+                            if (window.__TAURI_INTERNALS__) {
+                                window.__TAURI_INTERNALS__.invoke('open_new_window', { url: href });
+                            }
+                        }
 
                         // Intercept target="_blank" link clicks
                         document.addEventListener('click', function(e) {
@@ -33,18 +39,18 @@ pub fn run() {
                             if (link && link.href) {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                window.location.href = link.href;
+                                openInNewWindow(link.href);
                             }
                         }, true);
 
-                        // Override window.open to navigate in same window for trusted origins
+                        // Override window.open to create new app windows for trusted origins
                         var _open = window.open;
                         window.open = function(url) {
                             if (url) {
                                 try {
                                     var u = new URL(url, window.location.href);
                                     if (u.origin === 'https://wiki3.ai' || u.origin === 'https://www.wiki3.ai') {
-                                        window.location.href = u.href;
+                                        openInNewWindow(u.href);
                                         return null;
                                     }
                                 } catch(e) {}
@@ -97,6 +103,7 @@ pub fn run() {
             commands::set_execution_permission,
             commands::get_execution_state,
             commands::get_app_config,
+            commands::open_new_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
