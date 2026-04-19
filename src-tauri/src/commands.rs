@@ -1,0 +1,168 @@
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use tauri::{command, AppHandle, State};
+use tauri::webview::WebviewWindowBuilder;
+
+use crate::config;
+use crate::host::DesktopHostState;
+use crate::permissions::PermissionChoice;
+
+/// Counter for generating unique window labels.
+static WINDOW_COUNTER: AtomicU32 = AtomicU32::new(1);
+
+/// Detect whether the app is running as a desktop host.
+/// Returns host information if called from a trusted origin.
+#[command]
+pub fn detect_desktop_host(
+    _app: AppHandle,
+    origin: String,
+    state: State<'_, DesktopHostState>,
+) -> Result<serde_json::Value, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+
+    if !config.is_trusted_origin(&origin) {
+        return Ok(serde_json::json!({
+            "detected": false,
+            "reason": "untrusted_origin"
+        }));
+    }
+
+    Ok(serde_json::json!({
+        "detected": true,
+        "host": "wiki3-desktop",
+        "version": env!("CARGO_PKG_VERSION"),
+        "origin": origin
+    }))
+}
+
+/// Get the current permission state for the given origin.
+#[command]
+pub fn get_permission_state(
+    origin: String,
+    state: State<'_, DesktopHostState>,
+) -> Result<serde_json::Value, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    if !config.is_trusted_origin(&origin) {
+        return Err("Untrusted origin".to_string());
+    }
+
+    let policy = state.policy.lock().map_err(|e| e.to_string())?;
+    let allowed = policy.is_execution_allowed(&origin);
+
+    let choice = policy
+        .permissions
+        .iter()
+        .find(|p| p.origin == origin)
+        .and_then(|p| p.choice);
+
+    Ok(serde_json::json!({
+        "origin": origin,
+        "execution_allowed": allowed,
+        "choice": choice,
+    }))
+}
+
+/// Set the execution permission for a given origin.
+#[command]
+pub fn set_execution_permission(
+    origin: String,
+    choice: PermissionChoice,
+    state: State<'_, DesktopHostState>,
+) -> Result<serde_json::Value, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    if !config.is_trusted_origin(&origin) {
+        return Err("Untrusted origin".to_string());
+    }
+
+    let mut policy = state.policy.lock().map_err(|e| e.to_string())?;
+    policy.set_permission(&origin, choice);
+    let allowed = policy.is_execution_allowed(&origin);
+
+    // Persist the policy
+    drop(policy);
+    drop(config);
+    state.save_policy().map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "origin": origin,
+        "execution_allowed": allowed,
+        "choice": choice,
+    }))
+}
+
+/// Get the execution enablement state for a given origin.
+/// This is the execution policy layer that the frontend extension consults.
+#[command]
+pub fn get_execution_state(
+    origin: String,
+    state: State<'_, DesktopHostState>,
+) -> Result<serde_json::Value, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+    if !config.is_trusted_origin(&origin) {
+        return Ok(serde_json::json!({
+            "trusted": false,
+            "execution_allowed": false,
+            "reason": "untrusted_origin"
+        }));
+    }
+
+    let policy = state.policy.lock().map_err(|e| e.to_string())?;
+    let allowed = policy.is_execution_allowed(&origin);
+
+    Ok(serde_json::json!({
+        "trusted": true,
+        "execution_allowed": allowed,
+        "needs_permission": !allowed,
+    }))
+}
+
+/// Get the app configuration (non-sensitive parts).
+#[command]
+pub fn get_app_config(
+    state: State<'_, DesktopHostState>,
+) -> Result<serde_json::Value, String> {
+    let config = state.config.lock().map_err(|e| e.to_string())?;
+
+    Ok(serde_json::json!({
+        "site_url": config.effective_url(),
+        "trusted_origins": config.trusted_origins,
+        "version": env!("CARGO_PKG_VERSION"),
+    }))
+}
+
+/// Open a URL in a new app window. Only allows trusted wiki3.ai origins.
+#[command]
+pub fn open_new_window(app: AppHandle, url: String) -> Result<(), String> {
+    let parsed: tauri::Url = url.parse().map_err(|e: <tauri::Url as std::str::FromStr>::Err| e.to_string())?;
+
+    // Verify the URL is from a trusted origin
+    let host = parsed.host_str().unwrap_or("");
+    let is_trusted = host == "wiki3.ai" || host.ends_with(".wiki3.ai");
+
+    // Also allow the dev URL origin when set
+    let is_dev = std::env::var(config::DEV_URL_ENV)
+        .ok()
+        .and_then(|dev| dev.parse::<tauri::Url>().ok())
+        .map(|dev_parsed| {
+            parsed.host() == dev_parsed.host()
+                && parsed.port() == dev_parsed.port()
+                && parsed.scheme() == dev_parsed.scheme()
+        })
+        .unwrap_or(false);
+
+    if !is_trusted && !is_dev {
+        return Err(format!("Refusing to open untrusted URL: {}", url));
+    }
+
+    let n = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let label = format!("wiki3-{}", n);
+
+    WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::External(parsed))
+        .title("Wiki3")
+        .inner_size(1280.0, 800.0)
+        .min_inner_size(800.0, 600.0)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
