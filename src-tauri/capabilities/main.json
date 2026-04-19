@@ -1,12 +1,15 @@
 {
   "identifier": "wiki3-main",
   "description": "Main window capabilities for Wiki3 desktop app",
-  "windows": ["main"],
+  "windows": ["main", "wiki3-*"],
   "permissions": [
     "core:default",
     "core:window:default",
     "core:window:allow-set-title",
+    "core:window:allow-create",
     "core:webview:default",
-    "store:default"
+    "store:default",
+    "dialog:default",
+    "dialog:allow-open"
   ]
 }

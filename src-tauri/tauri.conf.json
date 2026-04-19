@@ -10,12 +10,12 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "withGlobalTauri": false,
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Wiki3",
-        "width": 1280,
-        "height": 800,
+        "width": 1100,
+        "height": 750,
         "minWidth": 800,
         "minHeight": 600,
         "resizable": true,
@@ -24,9 +24,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://wiki3.ai https://*.wiki3.ai; style-src 'self' 'unsafe-inline' https://wiki3.ai https://*.wiki3.ai; connect-src 'self' https://wiki3.ai https://*.wiki3.ai https://cdn.jsdelivr.net https://pypi.org https://files.pythonhosted.org wss://wiki3.ai; img-src 'self' data: blob: https://wiki3.ai https://*.wiki3.ai; font-src 'self' data: https://wiki3.ai https://*.wiki3.ai; frame-src https://wiki3.ai https://*.wiki3.ai; worker-src 'self' blob:; child-src 'self' blob:",
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://wiki3.ai https://*.wiki3.ai; style-src 'self' 'unsafe-inline' https://wiki3.ai https://*.wiki3.ai; connect-src 'self' https://wiki3.ai https://*.wiki3.ai https://cdn.jsdelivr.net https://pypi.org https://files.pythonhosted.org https://api.github.com wss://wiki3.ai ipc: http://ipc.localhost; img-src 'self' data: blob: https://wiki3.ai https://*.wiki3.ai https://avatars.githubusercontent.com; font-src 'self' data: https://wiki3.ai https://*.wiki3.ai; frame-src https://wiki3.ai https://*.wiki3.ai; worker-src 'self' blob:; child-src 'self' blob:",
       "dangerousDisableAssetCspModification": false
     }
   },
-  "plugins": {}
+  "plugins": {
+    "dialog": {}
+  }
 }
