@@ -81,7 +81,7 @@ export class WorkspacePanel {
           <div class="w3-ws-meta">
             <span>${ws.owner}/${ws.repo}</span>
             <span class="w3-ws-branch">${ws.branch}</span>
-            <span class="w3-ws-mode">${ws.publish_mode.replace('_', ' ')}</span>
+            <span class="w3-ws-mode">${ws.publish_mode.replace(/_/g, ' ')}</span>
           </div>
           ${ws.site_url ? `<a class="w3-ws-url" href="${ws.site_url}" target="_blank">${ws.site_url}</a>` : ''}
           <div class="w3-ws-actions">

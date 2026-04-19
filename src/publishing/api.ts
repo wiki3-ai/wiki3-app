@@ -4,6 +4,8 @@
  * Provides a typed interface to all publishing-related Tauri commands.
  */
 
+import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+
 import type {
   AuthStatus,
   CommitInfo,
@@ -15,13 +17,9 @@ import type {
   Workspace,
 } from './types';
 
-/** Invoke a Tauri command. Thin wrapper for type safety. */
+/** Invoke a Tauri command with typed return. */
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  const internals = (window as unknown as Record<string, { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<T> }>).__TAURI_INTERNALS__;
-  if (!internals) {
-    throw new Error('Tauri API not available — this module requires the desktop app.');
-  }
-  return internals.invoke(cmd, args);
+  return tauriInvoke<T>(cmd, args);
 }
 
 // =============================================================================

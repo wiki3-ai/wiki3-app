@@ -526,7 +526,17 @@ pub async fn open_local_workspace(
         .unwrap_or_default();
 
     // Parse owner/repo from GitHub URL
-    let (owner, repo) = parse_github_url(&origin_url).unwrap_or(("unknown".to_string(), "unknown".to_string()));
+    let (owner, repo) = if let Some(parsed) = parse_github_url(&origin_url) {
+        parsed
+    } else if origin_url.is_empty() {
+        return Err(
+            "No 'origin' remote found. Please add a GitHub remote first.".to_string(),
+        );
+    } else {
+        return Err(format!(
+            "Could not parse GitHub owner/repo from remote URL: {origin_url}"
+        ));
+    };
 
     let branch = git::current_branch(&local_path)
         .await
@@ -534,11 +544,7 @@ pub async fn open_local_workspace(
 
     let publish_mode = detect_publish_mode_local(&local_path);
     let publish_provider = state.publish_provider();
-    let site_url = if owner != "unknown" {
-        Some(publish_provider.site_url(&owner, &repo))
-    } else {
-        None
-    };
+    let site_url = Some(publish_provider.site_url(&owner, &repo));
 
     let name = std::path::Path::new(&local_path)
         .file_name()

@@ -241,19 +241,14 @@ impl GitHubPagesPublishProvider {
             .await
             .map_err(|e| ProviderError::Git(e.to_string()))?;
 
-        // Copy source files
+        // Copy source files using Rust fs operations (portable)
         let source_path = if source_dir == "." {
-            repo_path.to_string()
+            std::path::PathBuf::from(repo_path)
         } else {
-            format!("{repo_path}/{source_dir}")
+            std::path::PathBuf::from(repo_path).join(source_dir)
         };
-        git::run_command_in_dir(
-            &temp_path,
-            "bash",
-            &["-c", &format!("cp -a {source_path}/. .")],
-        )
-        .await
-        .map_err(|e| ProviderError::Git(e.to_string()))?;
+        copy_dir_recursive(&source_path, Path::new(&temp_path))
+            .map_err(|e| ProviderError::Other(format!("Failed to copy files: {e}")))?;
 
         // Ensure .nojekyll exists
         let nojekyll = Path::new(&temp_path).join(".nojekyll");
@@ -316,6 +311,31 @@ impl GitHubPagesPublishProvider {
             Ok(url.to_string())
         }
     }
+}
+
+/// Recursively copy a directory's contents to a destination, skipping .git.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+
+        // Skip .git directory to avoid copying the source repo's git state
+        if name == ".git" {
+            continue;
+        }
+
+        let src_path = entry.path();
+        let dst_path = dst.join(&file_name);
+
+        if src_path.is_dir() {
+            std::fs::create_dir_all(&dst_path)?;
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Detect publish mode from local repo structure (no API call needed).
