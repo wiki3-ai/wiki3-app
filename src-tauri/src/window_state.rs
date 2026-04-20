@@ -1,5 +1,6 @@
-//! Persistent window state — tracks open site windows and app settings
-//! so they can be restored across app launches.
+//! Persistent window state — tracks open site windows, their
+//! wiki-ownership, and app settings so they can be restored across
+//! app launches.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -25,6 +26,9 @@ pub struct AppSettings {
     pub restore_windows: bool,
     /// Default repo URL shown in the dashboard input.
     pub default_repo_url: String,
+    /// Default base directory for new wiki clones (e.g. `~/Wiki3`).
+    #[serde(default)]
+    pub default_wikis_dir: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -32,11 +36,12 @@ impl Default for AppSettings {
         Self {
             restore_windows: true,
             default_repo_url: DEFAULT_REPO_URL.to_string(),
+            default_wikis_dir: None,
         }
     }
 }
 
-/// Saved geometry for a single window.
+/// Saved geometry for a single tracked window.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowGeometry {
     pub url: String,
@@ -44,32 +49,60 @@ pub struct WindowGeometry {
     pub y: f64,
     pub width: f64,
     pub height: f64,
+    /// If this window was opened from a wiki entry, the wiki id.
+    #[serde(default)]
+    pub wiki_id: Option<String>,
+    /// True if the window has been closed but its geometry is kept
+    /// so the user can reopen it in the same place.
+    #[serde(default)]
+    pub closed: bool,
 }
 
-/// Full persisted state (settings + list of open site windows with geometry).
+/// Persisted dashboard main-window geometry (separate from site windows).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PersistedState {
-    settings: AppSettings,
-    /// Windows with their last-known position and size.
-    open_windows: Vec<WindowGeometry>,
+pub struct DashboardGeometry {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
-impl Default for PersistedState {
-    fn default() -> Self {
-        Self {
-            settings: AppSettings::default(),
-            open_windows: Vec::new(),
-        }
-    }
+/// Full persisted state.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct PersistedState {
+    #[serde(default)]
+    settings: AppSettings,
+    /// Site windows with their last-known position/size.
+    #[serde(default)]
+    open_windows: Vec<WindowGeometry>,
+    /// Dashboard geometry (if it has ever been recorded).
+    #[serde(default)]
+    dashboard_geometry: Option<DashboardGeometry>,
+}
+
+/// Info returned to the frontend about a tracked window.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackedWindowInfo {
+    pub label: String,
+    pub url: String,
+    pub wiki_id: Option<String>,
+    pub closed: bool,
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
 }
 
 /// Manages window lifecycle tracking and persistence.
 pub struct WindowStateManager {
     data_dir: PathBuf,
-    /// Currently open site windows: label → geometry.
+    /// Tracked site windows: label → geometry (includes both open and
+    /// recently-closed-but-remembered windows).
     pub open_windows: Mutex<HashMap<String, WindowGeometry>>,
     /// Persisted settings.
     pub settings: Mutex<AppSettings>,
+    /// Dashboard window geometry.
+    pub dashboard_geometry: Mutex<Option<DashboardGeometry>>,
     /// Cascade counter for positioning new windows.
     cascade_counter: Mutex<u32>,
 }
@@ -81,6 +114,7 @@ impl WindowStateManager {
             data_dir,
             open_windows: Mutex::new(HashMap::new()),
             settings: Mutex::new(state.settings),
+            dashboard_geometry: Mutex::new(state.dashboard_geometry),
             cascade_counter: Mutex::new(0),
         }
     }
@@ -102,8 +136,13 @@ impl WindowStateManager {
     }
 
     /// Window geometries that were saved when the app last quit.
-    pub fn saved_windows(&self) -> Vec<WindowGeometry> {
-        Self::load(&self.data_dir).open_windows
+    /// Only returns windows that were *open* (not ones marked closed).
+    pub fn saved_open_windows(&self) -> Vec<WindowGeometry> {
+        Self::load(&self.data_dir)
+            .open_windows
+            .into_iter()
+            .filter(|w| !w.closed)
+            .collect()
     }
 
     /// Whether window restore is enabled.
@@ -130,7 +169,7 @@ impl WindowStateManager {
         self.persist();
     }
 
-    /// Update the geometry of an existing window (e.g. after move/resize).
+    /// Update the geometry of an existing window (move/resize).
     pub fn update_window_geometry(&self, label: &str, x: f64, y: f64, width: f64, height: f64) {
         let mut windows = self.open_windows.lock().unwrap();
         if let Some(geom) = windows.get_mut(label) {
@@ -138,29 +177,115 @@ impl WindowStateManager {
             geom.y = y;
             geom.width = width;
             geom.height = height;
+            geom.closed = false;
         }
         drop(windows);
         self.persist();
     }
 
-    /// Remove a closed site window.
-    pub fn remove_window(&self, label: &str) {
+    /// Called when the OS tells us a window was destroyed.
+    /// If `keep_for_reopen` is true (e.g. because the window has a wiki
+    /// owner and we want to allow Reopen), the entry is retained but
+    /// flagged `closed`. Otherwise it is fully removed.
+    pub fn on_window_destroyed(&self, label: &str, keep_for_reopen: bool) {
+        let mut windows = self.open_windows.lock().unwrap();
+        if keep_for_reopen {
+            if let Some(geom) = windows.get_mut(label) {
+                geom.closed = true;
+            }
+        } else {
+            windows.remove(label);
+        }
+        drop(windows);
+        self.persist();
+    }
+
+    /// Mark a window as closed (but keep its geometry remembered).
+    /// Used when the user invokes "Close all" on a wiki.
+    pub fn mark_closed(&self, label: &str) {
+        let mut windows = self.open_windows.lock().unwrap();
+        if let Some(geom) = windows.get_mut(label) {
+            geom.closed = true;
+        }
+        drop(windows);
+        self.persist();
+    }
+
+    /// Completely forget a tracked window.
+    pub fn forget_window(&self, label: &str) {
         let mut windows = self.open_windows.lock().unwrap();
         windows.remove(label);
         drop(windows);
         self.persist();
     }
 
+    /// All windows tracked for a given wiki id.
+    pub fn windows_for_wiki(&self, wiki_id: &str) -> Vec<TrackedWindowInfo> {
+        let windows = self.open_windows.lock().unwrap();
+        windows
+            .iter()
+            .filter(|(_, g)| g.wiki_id.as_deref() == Some(wiki_id))
+            .map(|(label, g)| TrackedWindowInfo {
+                label: label.clone(),
+                url: g.url.clone(),
+                wiki_id: g.wiki_id.clone(),
+                closed: g.closed,
+                x: g.x,
+                y: g.y,
+                width: g.width,
+                height: g.height,
+            })
+            .collect()
+    }
+
+    /// All tracked windows (open or closed-with-memory).
+    pub fn all_tracked(&self) -> Vec<TrackedWindowInfo> {
+        let windows = self.open_windows.lock().unwrap();
+        windows
+            .iter()
+            .map(|(label, g)| TrackedWindowInfo {
+                label: label.clone(),
+                url: g.url.clone(),
+                wiki_id: g.wiki_id.clone(),
+                closed: g.closed,
+                x: g.x,
+                y: g.y,
+                width: g.width,
+                height: g.height,
+            })
+            .collect()
+    }
+
+    /// Save dashboard geometry.
+    pub fn update_dashboard_geometry(&self, x: f64, y: f64, width: f64, height: f64) {
+        let mut g = self.dashboard_geometry.lock().unwrap();
+        *g = Some(DashboardGeometry {
+            x,
+            y,
+            width,
+            height,
+        });
+        drop(g);
+        self.persist();
+    }
+
+    pub fn dashboard_geometry(&self) -> Option<DashboardGeometry> {
+        self.dashboard_geometry.lock().unwrap().clone()
+    }
+
     /// Write current state to disk.
     pub fn persist(&self) {
         let windows = self.open_windows.lock().unwrap();
         let settings = self.settings.lock().unwrap();
+        let dashboard_geometry = self.dashboard_geometry.lock().unwrap();
         let state = PersistedState {
             settings: settings.clone(),
             open_windows: windows.values().cloned().collect(),
+            dashboard_geometry: dashboard_geometry.clone(),
         };
         drop(windows);
         drop(settings);
+        drop(dashboard_geometry);
 
         let path = Self::state_path(&self.data_dir);
         if let Some(parent) = path.parent() {
@@ -169,5 +294,115 @@ impl WindowStateManager {
         if let Ok(json) = serde_json::to_string_pretty(&state) {
             let _ = std::fs::write(&path, json);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    fn geom(url: &str, wiki_id: Option<&str>) -> WindowGeometry {
+        WindowGeometry {
+            url: url.into(),
+            x: 10.0,
+            y: 20.0,
+            width: 800.0,
+            height: 600.0,
+            wiki_id: wiki_id.map(|s| s.to_string()),
+            closed: false,
+        }
+    }
+
+    #[test]
+    fn records_and_filters_by_wiki() {
+        let dir = tempdir().unwrap();
+        let m = WindowStateManager::new(dir.path().to_path_buf());
+        m.record_window("wiki3-1".into(), geom("https://a/", Some("w1")));
+        m.record_window("wiki3-2".into(), geom("https://b/", Some("w1")));
+        m.record_window("wiki3-3".into(), geom("https://c/", Some("w2")));
+        m.record_window("wiki3-4".into(), geom("https://d/", None));
+
+        let w1 = m.windows_for_wiki("w1");
+        assert_eq!(w1.len(), 2);
+        assert!(w1.iter().all(|w| w.wiki_id.as_deref() == Some("w1")));
+
+        let w2 = m.windows_for_wiki("w2");
+        assert_eq!(w2.len(), 1);
+        assert_eq!(w2[0].url, "https://c/");
+    }
+
+    #[test]
+    fn mark_closed_keeps_geometry_saved_filters_out() {
+        let dir = tempdir().unwrap();
+        let m = WindowStateManager::new(dir.path().to_path_buf());
+        m.record_window("wiki3-1".into(), geom("https://a/", Some("w1")));
+        m.update_window_geometry("wiki3-1", 100.0, 200.0, 900.0, 700.0);
+        m.mark_closed("wiki3-1");
+
+        // Still tracked for reopen logic
+        let tracked = m.windows_for_wiki("w1");
+        assert_eq!(tracked.len(), 1);
+        assert!(tracked[0].closed);
+        assert_eq!(tracked[0].x, 100.0);
+        assert_eq!(tracked[0].width, 900.0);
+
+        // Not in the "restore on startup" set since it's closed.
+        assert!(m.saved_open_windows().is_empty());
+    }
+
+    #[test]
+    fn destroyed_forgets_without_keep() {
+        let dir = tempdir().unwrap();
+        let m = WindowStateManager::new(dir.path().to_path_buf());
+        m.record_window("wiki3-1".into(), geom("https://a/", None));
+        m.on_window_destroyed("wiki3-1", false);
+        assert!(m.all_tracked().is_empty());
+    }
+
+    #[test]
+    fn destroyed_with_keep_retains_entry() {
+        let dir = tempdir().unwrap();
+        let m = WindowStateManager::new(dir.path().to_path_buf());
+        m.record_window("wiki3-1".into(), geom("https://a/", Some("w1")));
+        m.on_window_destroyed("wiki3-1", true);
+        let tracked = m.windows_for_wiki("w1");
+        assert_eq!(tracked.len(), 1);
+        assert!(tracked[0].closed);
+    }
+
+    #[test]
+    fn dashboard_geometry_roundtrip() {
+        let dir = tempdir().unwrap();
+        {
+            let m = WindowStateManager::new(dir.path().to_path_buf());
+            m.update_dashboard_geometry(5.0, 6.0, 1000.0, 800.0);
+        }
+        let m2 = WindowStateManager::new(dir.path().to_path_buf());
+        let g = m2.dashboard_geometry().unwrap();
+        assert_eq!(g.x, 5.0);
+        assert_eq!(g.width, 1000.0);
+    }
+
+    #[test]
+    fn settings_backcompat_missing_default_wikis_dir() {
+        // Simulate reading old state files (missing default_wikis_dir).
+        let json = r#"{
+            "settings": { "restore_windows": true, "default_repo_url": "https://github.com/x/y" },
+            "open_windows": []
+        }"#;
+        let s: PersistedState = serde_json::from_str(json).unwrap();
+        assert_eq!(s.settings.default_wikis_dir, None);
+        assert_eq!(s.settings.default_repo_url, "https://github.com/x/y");
+    }
+
+    #[test]
+    fn window_geometry_backcompat_missing_wiki_id_closed() {
+        let json = r#"{
+            "url": "https://a/", "x": 1, "y": 2, "width": 3, "height": 4
+        }"#;
+        let g: WindowGeometry = serde_json::from_str(json).unwrap();
+        assert_eq!(g.wiki_id, None);
+        assert!(!g.closed);
     }
 }

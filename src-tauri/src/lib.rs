@@ -2,9 +2,11 @@ pub mod commands;
 pub mod config;
 pub mod git;
 pub mod host;
+pub mod menu;
 pub mod permissions;
 pub mod providers;
 pub mod publishing_commands;
+pub mod wiki;
 pub mod window_state;
 pub mod workspace;
 
@@ -12,13 +14,10 @@ use tauri::Manager;
 
 use crate::host::DesktopHostState;
 use crate::publishing_commands::PublishingState;
+use crate::wiki::commands::WikiState;
 use crate::window_state::WindowStateManager;
 
 /// Build and configure the Tauri application.
-///
-/// The main window loads the local dashboard UI (index.html).
-/// Site windows (wiki3.ai) are opened in separate windows on demand,
-/// and restored from the previous session if the setting is enabled.
 pub fn run() {
     env_logger::init();
 
@@ -28,8 +27,6 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             use tauri::webview::PageLoadEvent;
             if matches!(payload.event(), PageLoadEvent::Finished) {
-                // Inject navigation handler for wiki3.ai site windows
-                // (WKWebView silently ignores new-window requests by default)
                 let url = payload.url().to_string();
                 let is_site_window = url.contains("wiki3.ai");
                 if is_site_window {
@@ -79,24 +76,52 @@ pub fn run() {
 
             log::info!("App data directory: {:?}", data_dir);
 
-            // Initialize desktop host state
             let host_state = DesktopHostState::new(data_dir.clone());
-
-            // Initialize publishing state
             let publishing_state = PublishingState::new(data_dir.clone());
+            let window_state = WindowStateManager::new(data_dir.clone());
+            let wiki_state = WikiState::new(data_dir);
 
-            // Initialize window state manager (persists open windows + settings)
-            let window_state = WindowStateManager::new(data_dir);
+            // One-time seed + migrate wikis from the legacy workspaces file.
+            if let Err(e) = wiki_state
+                .manager
+                .init(Some(&publishing_state.workspace_manager))
+            {
+                log::warn!("Wiki state init failed: {}", e);
+            }
 
-            // Store states in Tauri's managed state
             app.manage(host_state);
             app.manage(publishing_state);
             app.manage(window_state);
+            app.manage(wiki_state);
 
-            // Restore site windows from the previous session
+            // Install the native menu.
+            match crate::menu::build_menu(app.handle()) {
+                Ok(menu) => {
+                    if let Err(e) = app.set_menu(menu) {
+                        log::warn!("Failed to set menu: {}", e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to build menu: {}", e);
+                }
+            }
+            let handle_for_menu = app.handle().clone();
+            app.on_menu_event(move |_app, event| {
+                crate::menu::handle_menu_event(&handle_for_menu, event);
+            });
+
+            // Apply saved dashboard geometry, if any.
             let ws = app.state::<WindowStateManager>();
+            if let Some(g) = ws.dashboard_geometry() {
+                if let Some(win) = app.get_webview_window(crate::commands::DASHBOARD_LABEL) {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(g.x, g.y));
+                    let _ = win.set_size(tauri::PhysicalSize::new(g.width, g.height));
+                }
+            }
+
+            // Restore site windows from the previous session.
             if ws.should_restore() {
-                let saved = ws.saved_windows();
+                let saved = ws.saved_open_windows();
                 if !saved.is_empty() {
                     log::info!("Restoring {} window(s) from previous session", saved.len());
                     let handle = app.handle().clone();
@@ -108,6 +133,7 @@ pub fn run() {
                             Some(geom.y),
                             Some(geom.width),
                             Some(geom.height),
+                            geom.wiki_id,
                         ) {
                             log::warn!("Failed to restore window: {}", e);
                         }
@@ -119,19 +145,41 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             let label = window.label().to_string();
-            if !label.starts_with("wiki3-") {
-                return;
-            }
             let state = match window.app_handle().try_state::<WindowStateManager>() {
                 Some(s) => s,
                 None => return,
             };
+
+            // Dashboard: track its own geometry separately.
+            if label == crate::commands::DASHBOARD_LABEL {
+                if let tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) = event {
+                    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
+                        state.update_dashboard_geometry(
+                            pos.x as f64,
+                            pos.y as f64,
+                            size.width as f64,
+                            size.height as f64,
+                        );
+                    }
+                }
+                return;
+            }
+
+            if !label.starts_with("wiki3-") {
+                return;
+            }
             match event {
                 tauri::WindowEvent::Destroyed => {
-                    state.remove_window(&label);
+                    // Keep the entry around for reopen if it had a wiki owner.
+                    let had_owner = state
+                        .all_tracked()
+                        .into_iter()
+                        .find(|t| t.label == label)
+                        .and_then(|t| t.wiki_id)
+                        .is_some();
+                    state.on_window_destroyed(&label, had_owner);
                 }
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                    // Persist current position and size
                     if let (Ok(pos), Ok(size)) = (window.outer_position(), window.inner_size()) {
                         state.update_window_geometry(
                             &label,
@@ -146,12 +194,31 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            // Desktop host / permissions
             commands::detect_desktop_host,
             commands::get_permission_state,
             commands::set_execution_permission,
             commands::get_execution_state,
             commands::get_app_config,
+            // Site window management
             commands::open_new_window,
+            commands::open_new_window_for_wiki,
+            commands::list_wiki_windows,
+            commands::list_all_tracked_windows,
+            commands::close_wiki_windows,
+            commands::reopen_wiki_windows,
+            commands::focus_window,
+            commands::forget_tracked_window,
+            // Dashboard lifecycle
+            commands::toggle_dashboard,
+            commands::show_dashboard,
+            // External
+            commands::open_external_url,
+            commands::reveal_path,
+            // Settings
+            commands::get_settings,
+            commands::update_settings,
+            // Publishing (unchanged)
             publishing_commands::store_github_token,
             publishing_commands::get_auth_status,
             publishing_commands::clear_github_auth,
@@ -168,8 +235,19 @@ pub fn run() {
             publishing_commands::detect_workspace_publish_mode,
             publishing_commands::open_local_workspace,
             publishing_commands::open_repo_site,
-            commands::get_settings,
-            commands::update_settings,
+            // Wikis
+            wiki::commands::list_wikis,
+            wiki::commands::get_wiki,
+            wiki::commands::add_wiki,
+            wiki::commands::update_wiki,
+            wiki::commands::remove_wiki,
+            wiki::commands::restore_default_wikis,
+            wiki::commands::get_default_wikis_dir,
+            wiki::commands::open_wiki_site,
+            wiki::commands::open_wiki_remote,
+            wiki::commands::reveal_wiki_local,
+            wiki::commands::open_local_repo_as_wiki,
+            wiki::commands::clone_wiki,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

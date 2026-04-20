@@ -13,6 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
+        "label": "main",
         "title": "Wiki3 — Dashboard",
         "width": 1100,
         "height": 750,
@@ -20,6 +21,7 @@
         "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
+        "center": false,
         "url": "index.html"
       }
     ],
