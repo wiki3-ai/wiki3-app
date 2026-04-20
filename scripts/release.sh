@@ -36,10 +36,11 @@ if [ -z "$DMG" ]; then
 fi
 
 # Check signing status
-if codesign -dv "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Wiki3.app" 2>&1 | grep -q "Authority=Developer ID"; then
-  SIGNED="signed"
-else
-  SIGNED="unsigned"
+SIGNED="unsigned"
+if CODESIGN_OUT=$(codesign -dvv "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Wiki3.app" 2>&1); then
+  if echo "$CODESIGN_OUT" | grep -q "Authority=Developer ID"; then
+    SIGNED="signed"
+  fi
 fi
 
 DMG_NAME=$(basename "$DMG")
