@@ -232,11 +232,17 @@ npm run tauri:build
 ### Test
 
 ```bash
-# Rust unit tests (29 tests covering workspace, git, auth, publish, providers)
+# Rust unit tests (covers workspace, git, auth, publish, providers, wiki
+# manager, ordering, per-wiki git/publish, clone integration)
 cd src-tauri && cargo test
 
 # TypeScript type checking
 npm run typecheck
+
+# Frontend unit tests (vitest + jsdom) — cover the dashboard drag-reorder
+# math and the clone target resolution so those two bugs can't regress
+# silently.
+npm test
 ```
 
 ## Configuration

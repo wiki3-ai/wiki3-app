@@ -129,6 +129,24 @@ pub fn get_default_wikis_dir(app: AppHandle) -> Result<String, String> {
     Ok(state.default_base_dir.to_string_lossy().to_string())
 }
 
+/// Return whether `path` is a directory that exists and has no entries.
+/// Used by the clone flow to distinguish "user picked an empty target
+/// directory" (clone directly into it) from "user picked a parent
+/// directory" (prompt for a subfolder name).
+///
+/// Returns `false` for a path that doesn't exist or isn't a directory.
+#[command]
+pub fn is_empty_dir(path: String) -> Result<bool, String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() || !p.is_dir() {
+        return Ok(false);
+    }
+    match p.read_dir() {
+        Ok(mut entries) => Ok(entries.next().is_none()),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Open the site URL for a wiki in a new in-app window, recording the
 /// wiki ownership so it can be tracked on the dashboard. If the wiki
 /// has no `site_url` but has a GitHub remote, a conventional Pages URL
@@ -251,12 +269,25 @@ pub async fn open_local_repo_as_wiki(app: AppHandle, local_path: String) -> Resu
 /// Clone a remote repo to a user-chosen local folder and register it as a wiki.
 /// The caller (frontend) is responsible for presenting the file dialog and
 /// passing the selected absolute `target_path`. The backend verifies the
-/// path does not already exist and runs `git clone` (unauthenticated).
+/// path does not already exist (or exists as an empty directory) and runs
+/// `git clone` (unauthenticated).
 #[command]
 pub async fn clone_wiki(
     app: AppHandle,
     remote_url: String,
     target_path: String,
+) -> Result<Wiki, String> {
+    let state = app.state::<WikiState>();
+    clone_wiki_into(&state.manager, &remote_url, &target_path).await
+}
+
+/// Test-friendly core of `clone_wiki`: no `AppHandle`, takes a manager
+/// directly so it can be exercised in integration tests against a local
+/// bare repo.
+pub async fn clone_wiki_into(
+    manager: &crate::wiki::manager::WikiManager,
+    remote_url: &str,
+    target_path: &str,
 ) -> Result<Wiki, String> {
     use tokio::process::Command;
 
@@ -316,7 +347,6 @@ pub async fn clone_wiki(
         })
         .unwrap_or_else(|| "wiki".into());
 
-    let state = app.state::<WikiState>();
     let wiki = Wiki {
         id: uuid::Uuid::new_v4().to_string(),
         name,
@@ -329,5 +359,140 @@ pub async fn clone_wiki(
         last_opened_at: chrono::Utc::now(),
         publish_on_commit: false,
     };
-    state.manager.add(wiki).map_err(err)
+    manager.add(wiki).map_err(err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wiki::manager::WikiManager;
+    use tempfile::tempdir;
+
+    #[test]
+    fn is_empty_dir_cases() {
+        let dir = tempdir().unwrap();
+        // Empty directory
+        assert_eq!(
+            is_empty_dir(dir.path().to_string_lossy().to_string()).unwrap(),
+            true
+        );
+
+        // Non-empty directory
+        std::fs::write(dir.path().join("a"), b"hi").unwrap();
+        assert_eq!(
+            is_empty_dir(dir.path().to_string_lossy().to_string()).unwrap(),
+            false
+        );
+
+        // Non-existent path
+        assert_eq!(
+            is_empty_dir(format!("{}/does-not-exist", dir.path().display())).unwrap(),
+            false
+        );
+
+        // A file, not a directory
+        let f = dir.path().join("a");
+        assert_eq!(is_empty_dir(f.to_string_lossy().to_string()).unwrap(), false);
+    }
+
+    /// End-to-end: clone from a local bare repo into an empty directory
+    /// and verify the wiki record is created.
+    #[tokio::test]
+    async fn clone_wiki_into_empty_dir_succeeds() {
+        // Skip if git isn't on PATH in the CI sandbox.
+        if tokio::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .await
+            .is_err()
+        {
+            eprintln!("skipping clone_wiki_into_empty_dir_succeeds: git not available");
+            return;
+        }
+
+        let workdir = tempdir().unwrap();
+
+        // 1. Build a tiny source repo.
+        let src = workdir.path().join("src-repo");
+        std::fs::create_dir_all(&src).unwrap();
+        run_git(&src, &["init", "-q", "-b", "main"]).await;
+        run_git(&src, &["config", "user.email", "t@t"]).await;
+        run_git(&src, &["config", "user.name", "t"]).await;
+        std::fs::write(src.join("README.md"), b"hello").unwrap();
+        run_git(&src, &["add", "-A"]).await;
+        run_git(&src, &["commit", "-q", "-m", "init"]).await;
+
+        // 2. Make it a bare clone so we can `git clone` from it by path.
+        let bare = workdir.path().join("bare.git");
+        let out = tokio::process::Command::new("git")
+            .args(["clone", "--bare", "-q"])
+            .arg(&src)
+            .arg(&bare)
+            .output()
+            .await
+            .unwrap();
+        assert!(out.status.success(), "bare clone failed: {out:?}");
+
+        // 3. Clone it via the backend helper into an empty target dir.
+        let data = tempdir().unwrap();
+        let manager = WikiManager::new(data.path().to_path_buf());
+        let target = workdir.path().join("cloned").to_string_lossy().to_string();
+        // Pre-create as empty to exercise the "existing empty dir" branch.
+        std::fs::create_dir_all(&target).unwrap();
+
+        let wiki = clone_wiki_into(&manager, &bare.to_string_lossy(), &target)
+            .await
+            .expect("clone should succeed");
+
+        assert_eq!(wiki.origin, WikiOrigin::Clone);
+        assert_eq!(wiki.local_path.as_deref(), Some(target.as_str()));
+        // The cloned target must now contain a .git folder.
+        assert!(std::path::Path::new(&target).join(".git").exists());
+        // The wiki should be persisted and listed.
+        let listed = manager.list().unwrap();
+        assert!(listed.iter().any(|w| w.id == wiki.id));
+    }
+
+    #[tokio::test]
+    async fn clone_wiki_rejects_nonempty_target() {
+        let workdir = tempdir().unwrap();
+        let target = workdir.path().join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("existing.txt"), b"x").unwrap();
+
+        let data = tempdir().unwrap();
+        let manager = WikiManager::new(data.path().to_path_buf());
+        let err = clone_wiki_into(
+            &manager,
+            "https://example.invalid/owner/repo",
+            &target.to_string_lossy(),
+        )
+        .await
+        .expect_err("non-empty target should be rejected");
+        assert!(err.contains("not empty"), "unexpected error: {err}");
+    }
+
+    #[tokio::test]
+    async fn clone_wiki_requires_inputs() {
+        let data = tempdir().unwrap();
+        let manager = WikiManager::new(data.path().to_path_buf());
+        assert!(clone_wiki_into(&manager, "", "/tmp/x").await.is_err());
+        assert!(clone_wiki_into(&manager, "https://x/y", "")
+            .await
+            .is_err());
+    }
+
+    async fn run_git(dir: &std::path::Path, args: &[&str]) {
+        let out = tokio::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: stderr={}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }

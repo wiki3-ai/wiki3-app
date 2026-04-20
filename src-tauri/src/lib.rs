@@ -245,6 +245,7 @@ pub fn run() {
             wiki::commands::set_wiki_publish_on_commit,
             wiki::commands::restore_default_wikis,
             wiki::commands::get_default_wikis_dir,
+            wiki::commands::is_empty_dir,
             wiki::commands::open_wiki_site,
             wiki::commands::open_wiki_remote,
             wiki::commands::reveal_wiki_local,

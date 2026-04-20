@@ -143,6 +143,9 @@
       .w3-workspace-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
       .w3-workspace-card.w3-dragging { opacity: 0.45; }
       .w3-workspace-card.w3-drop-target { border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0,102,204,0.2); }
+      /* Inner links/images would otherwise steal the HTML5 drag, preventing
+         the card from initiating its own reorder drag. */
+      .w3-workspace-card a, .w3-workspace-card img { -webkit-user-drag: none; user-drag: none; }
       .w3-drag-handle {
         display: inline-block;
         cursor: grab;

@@ -178,6 +178,11 @@ export function openExternalUrl(url: string): Promise<void> {
 
 // ── File dialog helpers ──────────────────────────────────────────────────
 
+/** Return whether a directory path exists and has no entries. */
+export function isEmptyDir(path: string): Promise<boolean> {
+  return invoke<boolean>('is_empty_dir', { path });
+}
+
 /** Let the user pick an existing local folder. Returns `null` if cancelled. */
 export async function pickFolder(defaultPath?: string): Promise<string | null> {
   const result = await openDialog({
@@ -190,27 +195,36 @@ export async function pickFolder(defaultPath?: string): Promise<string | null> {
 }
 
 /**
- * Let the user choose a *target* folder for a clone by selecting a parent
- * directory plus a folder name. We use an existing-folder picker (which
- * returns the parent) and then prompt for the sub-folder name; the result
- * is the full absolute target path. Returns `null` if cancelled.
+ * Let the user choose a *target* folder for a clone.
+ *
+ * If the user picks an empty directory we use it directly — that's the
+ * natural "create and select this folder in the dialog" flow. Only when
+ * they pick a *non-empty* directory do we prompt for a subfolder name;
+ * the result is the full absolute target path.
+ *
+ * Returns `null` if the user cancelled at any step.
  */
 export async function pickCloneTarget(
   defaultBase: string,
   defaultName: string,
 ): Promise<string | null> {
-  const parent = await pickFolder(defaultBase);
-  if (!parent) return null;
-  const folderName = window.prompt('Folder name for the wiki:', defaultName);
-  if (!folderName) return null;
-  const trimmed = folderName.trim();
-  if (!trimmed) return null;
-  // Use forward slash; Rust's Path handles both on Windows too, but prefer
-  // the platform separator where possible.
-  const sep = parent.includes('\\') ? '\\' : '/';
-  const joined =
-    parent.endsWith('/') || parent.endsWith('\\')
-      ? `${parent}${trimmed}`
-      : `${parent}${sep}${trimmed}`;
-  return joined;
+  const picked = await pickFolder(defaultBase);
+  if (!picked) return null;
+
+  // If it's empty (including "just created in the dialog"), use as-is.
+  const empty = await isEmptyDir(picked).catch(() => false);
+  if (empty) return picked;
+
+  const folderName = window.prompt(
+    `"${picked}" is not empty. Enter a sub-folder name to clone into:`,
+    defaultName,
+  );
+  if (!folderName || !folderName.trim()) return null;
+  return joinPath(picked, folderName.trim());
+}
+
+function joinPath(parent: string, child: string): string {
+  const sep = parent.includes('\\') && !parent.includes('/') ? '\\' : '/';
+  if (parent.endsWith('/') || parent.endsWith('\\')) return `${parent}${child}`;
+  return `${parent}${sep}${child}`;
 }

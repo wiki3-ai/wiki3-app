@@ -8,6 +8,7 @@
 import { listen } from '@tauri-apps/api/event';
 
 import * as wikiApi from './wiki/api';
+import { computeReorder } from './wiki/dashboard-logic';
 import type { TrackedWindowInfo, Wiki } from './wiki/types';
 
 let wikis: Wiki[] = [];
@@ -114,6 +115,12 @@ function wireDragAndDrop(): void {
       cards.forEach((c) => c.classList.remove('w3-drop-target'));
       dragSrcId = null;
     });
+    // `dragenter` and `dragover` must both call preventDefault() to mark
+    // the card as a valid drop target in Chromium/WebKit.
+    card.addEventListener('dragenter', (e) => {
+      if (!dragSrcId) return;
+      e.preventDefault();
+    });
     card.addEventListener('dragover', (e) => {
       if (!dragSrcId) return;
       e.preventDefault();
@@ -138,10 +145,6 @@ function wireDragAndDrop(): void {
 }
 
 async function reorderAfterDrop(srcId: string, dstId: string, ev: DragEvent): Promise<void> {
-  const srcIdx = wikis.findIndex((w) => w.id === srcId);
-  const dstIdx = wikis.findIndex((w) => w.id === dstId);
-  if (srcIdx < 0 || dstIdx < 0) return;
-
   // Decide whether to insert before or after the drop target based on
   // which half of the card the cursor is in.
   const dstEl = document
@@ -153,13 +156,11 @@ async function reorderAfterDrop(srcId: string, dstId: string, ev: DragEvent): Pr
     before = ev.clientY < rect.top + rect.height / 2;
   }
 
-  const next = wikis.slice();
-  const [moved] = next.splice(srcIdx, 1);
-  // Recompute dst index after removal.
-  let insertAt = next.findIndex((w) => w.id === dstId);
-  if (insertAt < 0) insertAt = next.length;
-  if (!before) insertAt += 1;
-  next.splice(insertAt, 0, moved);
+  const next = computeReorder(wikis, srcId, dstId, before);
+  // No-op: unchanged order.
+  if (next.length === wikis.length && next.every((w, i) => w.id === wikis[i].id)) {
+    return;
+  }
 
   // Optimistic render.
   wikis = next;
@@ -245,21 +246,21 @@ function renderCard(w: Wiki): string {
   const links: string[] = [];
   if (hasLocal) {
     links.push(
-      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Local:</span> <a href="#" data-action="reveal-local" data-id="${escapeHtml(
+      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Local:</span> <a href="#" draggable="false" data-action="reveal-local" data-id="${escapeHtml(
         w.id,
       )}" class="w3-ws-path-link">${escapeHtml(w.local_path!)}</a></div>`,
     );
   }
   if (hasRemote) {
     links.push(
-      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Remote:</span> <a href="#" data-action="open-remote" data-id="${escapeHtml(
+      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Remote:</span> <a href="#" draggable="false" data-action="open-remote" data-id="${escapeHtml(
         w.id,
       )}" class="w3-ws-url">${escapeHtml(w.remote!.url)}</a></div>`,
     );
   }
   if (hasSite) {
     links.push(
-      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Site:</span> <a href="#" data-action="open-site" data-id="${escapeHtml(
+      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Site:</span> <a href="#" draggable="false" data-action="open-site" data-id="${escapeHtml(
         w.id,
       )}" class="w3-ws-url">${escapeHtml(w.site_url!)}</a></div>`,
     );
