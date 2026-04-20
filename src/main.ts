@@ -85,8 +85,92 @@ function render(): void {
       <button class="w3-btn" data-action="clone-wiki">Clone from URL…</button>
       <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
     </div>
-    <div class="w3-workspace-list">${cards}</div>
+    <div class="w3-workspace-list" id="w3-wiki-list">${cards}</div>
   `;
+  wireDragAndDrop();
+}
+
+// ── Drag-and-drop reorder ────────────────────────────────────────────────
+
+let dragSrcId: string | null = null;
+
+function wireDragAndDrop(): void {
+  const list = document.getElementById('w3-wiki-list');
+  if (!list) return;
+  const cards = Array.from(list.querySelectorAll<HTMLElement>('.w3-workspace-card'));
+
+  cards.forEach((card) => {
+    card.addEventListener('dragstart', (e) => {
+      dragSrcId = card.getAttribute('data-wiki-id');
+      card.classList.add('w3-dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        // Needed for Firefox to initiate the drag.
+        e.dataTransfer.setData('text/plain', dragSrcId ?? '');
+      }
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('w3-dragging');
+      cards.forEach((c) => c.classList.remove('w3-drop-target'));
+      dragSrcId = null;
+    });
+    card.addEventListener('dragover', (e) => {
+      if (!dragSrcId) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      // Highlight the drop target.
+      cards.forEach((c) => c.classList.remove('w3-drop-target'));
+      card.classList.add('w3-drop-target');
+    });
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('w3-drop-target');
+    });
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      card.classList.remove('w3-drop-target');
+      const srcId = dragSrcId;
+      const dstId = card.getAttribute('data-wiki-id');
+      dragSrcId = null;
+      if (!srcId || !dstId || srcId === dstId) return;
+      void reorderAfterDrop(srcId, dstId, e);
+    });
+  });
+}
+
+async function reorderAfterDrop(srcId: string, dstId: string, ev: DragEvent): Promise<void> {
+  const srcIdx = wikis.findIndex((w) => w.id === srcId);
+  const dstIdx = wikis.findIndex((w) => w.id === dstId);
+  if (srcIdx < 0 || dstIdx < 0) return;
+
+  // Decide whether to insert before or after the drop target based on
+  // which half of the card the cursor is in.
+  const dstEl = document
+    .getElementById('w3-wiki-list')
+    ?.querySelector<HTMLElement>(`.w3-workspace-card[data-wiki-id="${CSS.escape(dstId)}"]`);
+  let before = true;
+  if (dstEl) {
+    const rect = dstEl.getBoundingClientRect();
+    before = ev.clientY < rect.top + rect.height / 2;
+  }
+
+  const next = wikis.slice();
+  const [moved] = next.splice(srcIdx, 1);
+  // Recompute dst index after removal.
+  let insertAt = next.findIndex((w) => w.id === dstId);
+  if (insertAt < 0) insertAt = next.length;
+  if (!before) insertAt += 1;
+  next.splice(insertAt, 0, moved);
+
+  // Optimistic render.
+  wikis = next;
+  render();
+
+  try {
+    await wikiApi.reorderWikis(next.map((w) => w.id));
+  } catch (err) {
+    console.error('Reorder failed, refreshing:', err);
+    await refresh();
+  }
 }
 
 function renderCard(w: Wiki): string {
@@ -114,6 +198,27 @@ function renderCard(w: Wiki): string {
 
   const remoteBtn = hasRemote
     ? `<button class="w3-btn w3-btn-sm" data-action="open-remote" data-id="${escapeHtml(w.id)}">Open on GitHub</button>`
+    : '';
+
+  // Local-repo-only actions: commit / publish / build.
+  const commitBtn = hasLocal
+    ? `<button class="w3-btn w3-btn-sm" data-action="commit-wiki" data-id="${escapeHtml(w.id)}" title="Commit changes in the local repo">Commit…</button>`
+    : '';
+  const publishBtn = hasLocal && hasRemote
+    ? `<button class="w3-btn w3-btn-sm" data-action="publish-wiki" data-id="${escapeHtml(w.id)}" title="Push and publish the site">Publish</button>`
+    : '';
+  const buildBtn = hasLocal
+    ? `<button class="w3-btn w3-btn-sm" data-action="build-site" data-id="${escapeHtml(w.id)}" title="Run &#x60;jupyter lite build&#x60; in the local repo">Build Site</button>`
+    : '';
+  const pullBtn = hasLocal && hasRemote
+    ? `<button class="w3-btn w3-btn-sm" data-action="pull-wiki" data-id="${escapeHtml(w.id)}" title="git pull origin">Pull</button>`
+    : '';
+
+  const pocCheckbox = hasLocal && hasRemote
+    ? `<label class="w3-ws-poc" title="When checked, a successful Commit also pushes and publishes.">
+         <input type="checkbox" data-action="toggle-publish-on-commit" data-id="${escapeHtml(w.id)}" ${w.publish_on_commit ? 'checked' : ''} />
+         Publish on Commit
+       </label>`
     : '';
 
   const closeAllBtn =
@@ -163,9 +268,10 @@ function renderCard(w: Wiki): string {
   const originTag = originLabel(w.origin);
 
   return `
-    <div class="w3-workspace-card" data-wiki-id="${escapeHtml(w.id)}">
+    <div class="w3-workspace-card" draggable="true" data-wiki-id="${escapeHtml(w.id)}">
       <div class="w3-ws-header">
-        <h3 style="margin:0;">${escapeHtml(w.name)}</h3>
+        <span class="w3-drag-handle" title="Drag to reorder" aria-hidden="true">⋮⋮</span>
+        <h3 style="margin:0;flex:1;">${escapeHtml(w.name)}</h3>
         <span class="w3-ws-provider">${originTag}</span>
       </div>
       ${w.description ? `<div class="w3-ws-meta"><span>${escapeHtml(w.description)}</span></div>` : ''}
@@ -175,6 +281,10 @@ function renderCard(w: Wiki): string {
       <div class="w3-ws-actions">
         ${siteBtn}
         ${cloneBtn}
+        ${commitBtn}
+        ${publishBtn}
+        ${buildBtn}
+        ${pullBtn}
         ${remoteBtn}
         ${revealBtn}
         ${windowsToggle}
@@ -182,6 +292,7 @@ function renderCard(w: Wiki): string {
         ${reopenAllBtn}
         <button class="w3-btn w3-btn-sm w3-btn-danger" data-action="remove-wiki" data-id="${escapeHtml(w.id)}" title="Remove from dashboard">Remove</button>
       </div>
+      ${pocCheckbox ? `<div class="w3-ws-poc-row">${pocCheckbox}</div>` : ''}
       ${windowsList}
     </div>`;
 }
@@ -336,6 +447,101 @@ async function openLocalRepoDialog(): Promise<void> {
   }
 }
 
+async function openCommitDialog(wikiId: string): Promise<void> {
+  const w = wikis.find((x) => x.id === wikiId);
+  if (!w) return;
+
+  // Best-effort: show current git status so the user can sanity-check.
+  let statusText = 'Loading status…';
+  let hasChanges: boolean | null = null;
+  try {
+    const s = await wikiApi.wikiGitStatus(wikiId);
+    const dirty = s.dirty_files.length + s.staged_files.length + s.untracked_files.length;
+    hasChanges = dirty > 0;
+    if (hasChanges) {
+      statusText = `On ${escapeHtml(s.branch)}: ${s.staged_files.length} staged · ${s.dirty_files.length} modified · ${s.untracked_files.length} untracked`;
+    } else {
+      statusText = `On ${escapeHtml(s.branch)}: nothing to commit.`;
+    }
+  } catch (e) {
+    statusText = `Could not read git status: ${escapeHtml(String(e))}`;
+    hasChanges = null;
+  }
+
+  const poc = !!w.remote && w.publish_on_commit;
+  const publishAvailable = !!w.remote;
+
+  const dlg = showDialog(`
+    <h3>Commit — ${escapeHtml(w.name)}</h3>
+    <div class="w3-muted" style="font-size:13px;margin-bottom:8px;">${statusText}</div>
+    <form class="w3-form" id="commit-form">
+      <label>Commit message
+        <input type="text" name="message" autofocus placeholder="Describe the change" required />
+      </label>
+      ${
+        publishAvailable
+          ? `<label class="w3-inline-check">
+               <input type="checkbox" name="also_publish" ${poc ? 'checked' : ''} />
+               Also publish (push and trigger site build)
+             </label>`
+          : `<div class="w3-muted" style="font-size:12px;">This wiki has no remote — commit only.</div>`
+      }
+      <div class="w3-dialog-status" id="commit-status" style="display:none;"></div>
+      <div class="w3-dialog-actions">
+        <button type="button" class="w3-btn" data-act="cancel">Cancel</button>
+        <button type="submit" class="w3-btn w3-btn-primary"${hasChanges === false ? ' disabled' : ''}>Commit</button>
+      </div>
+    </form>`);
+
+  const form = dlg.querySelector('#commit-form') as HTMLFormElement;
+  const status = dlg.querySelector('#commit-status') as HTMLElement;
+  form.querySelector('[data-act="cancel"]')!.addEventListener('click', () => dlg.remove());
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const message = (fd.get('message') as string) || '';
+    const alsoPublish =
+      publishAvailable && (fd.get('also_publish') === 'on' || fd.get('also_publish') === 'true');
+    status.style.display = 'block';
+    status.classList.remove('w3-error');
+    status.textContent = alsoPublish ? 'Committing and publishing…' : 'Committing…';
+    try {
+      const result = await wikiApi.wikiCommitAndMaybePublish(wikiId, message, alsoPublish);
+      dlg.remove();
+      await refresh();
+      if (result.published) {
+        alert('Committed and pushed. The site will rebuild on the server — run Pull later to refresh the local copy.');
+      }
+    } catch (err) {
+      status.classList.add('w3-error');
+      status.textContent = String(err);
+    }
+  });
+}
+
+async function buildSite(wikiId: string): Promise<void> {
+  const w = wikis.find((x) => x.id === wikiId);
+  if (!w) return;
+  const dlg = showDialog(`
+    <h3>Building — ${escapeHtml(w.name)}</h3>
+    <div class="w3-muted" style="font-size:13px;">Running <code>jupyter lite build</code> in <code>${escapeHtml(w.local_path ?? '')}</code>…</div>
+    <div class="w3-dialog-status" id="build-status" style="display:block;margin-top:12px;">Working…</div>
+    <div class="w3-dialog-actions">
+      <button type="button" class="w3-btn" data-act="close" disabled>Close</button>
+    </div>`);
+  const status = dlg.querySelector('#build-status') as HTMLElement;
+  const closeBtn = dlg.querySelector('[data-act="close"]') as HTMLButtonElement;
+  try {
+    const result = await wikiApi.wikiBuildSite(wikiId);
+    status.textContent = `Built successfully → ${result.output_dir}`;
+  } catch (err) {
+    status.classList.add('w3-error');
+    status.textContent = String(err);
+  }
+  closeBtn.disabled = false;
+  closeBtn.addEventListener('click', () => dlg.remove());
+}
+
 async function openUrlDialog(): Promise<void> {
   const url = window.prompt('Wiki site or repo URL:');
   if (!url || !url.trim()) return;
@@ -373,8 +579,10 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
   const id = target.getAttribute('data-id') || '';
   const label = target.getAttribute('data-label') || '';
 
-  // Prevent default <a href="#"> navigation.
-  ev.preventDefault();
+  // Prevent default <a href="#"> navigation, but leave form controls alone.
+  if (target.tagName !== 'INPUT' && target.tagName !== 'SELECT' && target.tagName !== 'TEXTAREA') {
+    ev.preventDefault();
+  }
 
   try {
     switch (action) {
@@ -449,6 +657,48 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           return;
         await wikiApi.removeWiki(id);
         await refresh();
+        break;
+      }
+      case 'commit-wiki':
+        await openCommitDialog(id);
+        break;
+      case 'publish-wiki': {
+        const go = window.confirm(
+          'Publish this wiki?\n\nThis will push to origin and trigger the remote site build. Run Pull later to refresh your local copy once the build finishes.',
+        );
+        if (!go) return;
+        try {
+          await wikiApi.wikiPublish(id);
+          await refresh();
+          alert('Pushed. The site build has been triggered — run Pull later to refresh the local copy.');
+        } catch (err) {
+          alert(`Publish failed: ${err}`);
+        }
+        break;
+      }
+      case 'pull-wiki':
+        try {
+          const msg = await wikiApi.wikiPull(id);
+          alert(`Pulled:\n${msg}`);
+          await refresh();
+        } catch (err) {
+          alert(`Pull failed: ${err}`);
+        }
+        break;
+      case 'build-site':
+        await buildSite(id);
+        break;
+      case 'toggle-publish-on-commit': {
+        const checked = (target as HTMLInputElement).checked;
+        try {
+          await wikiApi.setWikiPublishOnCommit(id, checked);
+          const w = wikis.find((x) => x.id === id);
+          if (w) w.publish_on_commit = checked;
+        } catch (err) {
+          // Revert the checkbox on error.
+          (target as HTMLInputElement).checked = !checked;
+          alert(String(err));
+        }
         break;
       }
     }

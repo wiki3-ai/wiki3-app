@@ -32,6 +32,7 @@ export interface Wiki {
   description: string | null;
   created_at: string;
   last_opened_at: string;
+  publish_on_commit: boolean;
 }
 
 export interface AddWikiParams {
@@ -49,6 +50,29 @@ export interface UpdateWikiParams {
   remote_url?: string | null;
   site_url?: string | null;
   description?: string | null;
+  publish_on_commit?: boolean;
+}
+
+export interface GitStatus {
+  branch: string;
+  ahead: number;
+  behind: number;
+  staged_files: string[];
+  dirty_files: string[];
+  untracked_files: string[];
+}
+
+export interface CommitInfo {
+  sha: string;
+  message: string;
+  author: string;
+  timestamp: string;
+}
+
+export interface PushResult {
+  success: boolean;
+  branch: string;
+  message: string;
 }
 
 export interface TrackedWindowInfo {

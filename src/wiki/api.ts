@@ -7,6 +7,9 @@ import { open as openDialog } from '@tauri-apps/plugin-dialog';
 
 import type {
   AddWikiParams,
+  CommitInfo,
+  GitStatus,
+  PushResult,
   TrackedWindowInfo,
   UpdateWikiParams,
   Wiki,
@@ -36,6 +39,16 @@ export function updateWiki(wikiId: string, params: UpdateWikiParams): Promise<Wi
 
 export function removeWiki(wikiId: string): Promise<void> {
   return invoke<void>('remove_wiki', { wikiId });
+}
+
+/** Persist a new order for the dashboard. Any omitted ids are kept at the end. */
+export function reorderWikis(order: string[]): Promise<void> {
+  return invoke<void>('reorder_wikis', { order });
+}
+
+/** Toggle the "Publish on Commit" flag for a wiki. */
+export function setWikiPublishOnCommit(wikiId: string, value: boolean): Promise<Wiki> {
+  return invoke<Wiki>('set_wiki_publish_on_commit', { wikiId, value });
 }
 
 export function restoreDefaultWikis(): Promise<Wiki[]> {
@@ -71,6 +84,58 @@ export function openLocalRepoAsWiki(localPath: string): Promise<Wiki> {
 /** Clone a remote repo to a chosen local folder and register it as a wiki. */
 export function cloneWiki(remoteUrl: string, targetPath: string): Promise<Wiki> {
   return invoke<Wiki>('clone_wiki', { remoteUrl, targetPath });
+}
+
+// ── Per-wiki git + publish ───────────────────────────────────────────────
+
+export function wikiGitStatus(wikiId: string): Promise<GitStatus> {
+  return invoke<GitStatus>('wiki_git_status', { wikiId });
+}
+
+export function wikiCommit(wikiId: string, message: string): Promise<{ commit: CommitInfo }> {
+  return invoke<{ commit: CommitInfo }>('wiki_commit', { wikiId, message });
+}
+
+export function wikiPush(wikiId: string): Promise<PushResult> {
+  return invoke<PushResult>('wiki_push', { wikiId });
+}
+
+export function wikiPull(wikiId: string): Promise<string> {
+  return invoke<string>('wiki_pull', { wikiId });
+}
+
+export function wikiPublish(
+  wikiId: string,
+): Promise<{ push: PushResult; site_url: string | null }> {
+  return invoke<{ push: PushResult; site_url: string | null }>('wiki_publish', { wikiId });
+}
+
+/** Commit; if `alsoPublish` (or the wiki's stored `publish_on_commit`) is true, also push + publish. */
+export function wikiCommitAndMaybePublish(
+  wikiId: string,
+  message: string,
+  alsoPublish?: boolean,
+): Promise<{ committed: boolean; published: boolean; commit: unknown; publish?: unknown }> {
+  return invoke<{
+    committed: boolean;
+    published: boolean;
+    commit: unknown;
+    publish?: unknown;
+  }>('wiki_commit_and_maybe_publish', {
+    wikiId,
+    message,
+    alsoPublish: alsoPublish ?? null,
+  });
+}
+
+/** Run `jupyter lite build` in the wiki's local directory. */
+export function wikiBuildSite(
+  wikiId: string,
+): Promise<{ success: boolean; output_dir: string; stdout: string; stderr: string }> {
+  return invoke<{ success: boolean; output_dir: string; stdout: string; stderr: string }>(
+    'wiki_build_site',
+    { wikiId },
+  );
 }
 
 // ── Per-wiki window tracking ─────────────────────────────────────────────

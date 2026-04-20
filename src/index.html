@@ -141,6 +141,19 @@
         transition: box-shadow 0.15s;
       }
       .w3-workspace-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+      .w3-workspace-card.w3-dragging { opacity: 0.45; }
+      .w3-workspace-card.w3-drop-target { border-color: #0066cc; box-shadow: 0 0 0 2px rgba(0,102,204,0.2); }
+      .w3-drag-handle {
+        display: inline-block;
+        cursor: grab;
+        color: #bbb;
+        font-size: 14px;
+        letter-spacing: -2px;
+        user-select: none;
+        margin-right: 8px;
+        padding: 2px 4px;
+      }
+      .w3-drag-handle:active { cursor: grabbing; }
       .w3-ws-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
       .w3-ws-provider { font-size: 11px; text-transform: uppercase; color: #888; background: #f0f0f0; padding: 2px 8px; border-radius: 4px; }
       .w3-ws-meta { display: flex; gap: 12px; font-size: 13px; color: #555; margin-bottom: 6px; flex-wrap: wrap; }
@@ -150,6 +163,11 @@
       .w3-ws-url:hover { text-decoration: underline; }
       .w3-ws-path { font-size: 12px; color: #888; font-family: monospace; margin-bottom: 8px; display: block; }
       .w3-ws-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+      .w3-ws-poc-row { margin-top: 8px; font-size: 12px; color: #555; }
+      .w3-ws-poc { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+      .w3-ws-poc input { margin: 0; }
+      .w3-inline-check { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; color: #333; font-weight: 500; }
+      .w3-inline-check input { width: auto; margin: 0; }
 
       /* ── Dialog overlay ── */
       .w3-dialog-overlay {

@@ -82,20 +82,64 @@ TypeScript modules for desktop integration and publishing UI:
 
 ## Features
 
-- **Dashboard**: Main window with repo URL input prepopulated with the default site (`wiki3-ai/wiki3-ai-site`)
-- **Open from Repo URL**: Paste any GitHub repo URL → the app resolves its GitHub Pages URL (via API, with custom domain support) and opens the site in a new window
-- **Window Restore**: Site windows open at quit are automatically restored on next launch (configurable via `restore_windows` setting)
-- **New Window Handling**: Links with `target="_blank"` and `window.open()` on wiki3.ai pages are intercepted and opened in real app windows (WKWebView workaround)
-- **Run**: Enables notebook/cell execution through JupyterLite kernels (Pyodide/WASM Python, JavaScript) with desktop permission gating
-- **Persistence**: JupyterLite IndexedDB/localStorage state survives app quit and relaunch
-- **Security**: Trusted origin allowlist restricts desktop capabilities to wiki3.ai and *.github.io
-- **Permission Gating**: User must approve execution (allow once / allow always / deny) before Run is enabled
-- **Create from Template**: Create a new repo from `wiki3-ai/wiki3-ai-template`, clone, and open
-- **Fork**: Fork any repo, poll until ready, clone with upstream remote
-- **Commit & Push**: Stage, commit with message, push to origin (authenticated via token)
-- **Publish**: Auto-detect gh-pages or docs-folder mode, build/deploy, report site URL
+- **Dashboard**: List of wiki cards, each with links (local / remote / site), action buttons, and window tracking. New wikis appear at the top and can be dragged to reorder.
+- **Per-wiki Git & Publish**: Local repos expose Commit, Push, Pull, Publish, and Build Site buttons. The commit dialog has an "Also publish" option, and each wiki has a persistent **Publish on Commit** checkbox so one click can do commit → push → site-build.
+- **Build Site**: Runs `jupyter lite build` in the wiki's local directory to generate the static `_output/`.
+- **Add Wiki / Clone / Open Local**: File-dialog driven flows defaulting to `~/Wiki3`. Wikis are loose records — any combination of local path / remote / site URL is valid.
+- **Seeded Defaults**: First launch seeds `wiki3-ai/wiki3-ai-site` and `wiki3-ai/wiki3-ai-template`. Removing a default does not re-seed it.
+- **Window Tracking**: Site windows opened from a wiki card are tagged to that wiki, shown in an expandable list, and can be Close All / Reopen All together. Geometry is preserved across close/reopen.
+- **Window Restore**: Site windows open at quit are automatically restored on next launch (configurable via `restore_windows` setting).
+- **New Window Handling**: Links with `target="_blank"` and `window.open()` on wiki3.ai pages are intercepted and opened in real app windows (WKWebView workaround).
+- **Run**: Enables notebook/cell execution through JupyterLite kernels (Pyodide/WASM Python, JavaScript) with desktop permission gating.
+- **Persistence**: JupyterLite IndexedDB/localStorage state survives app quit and relaunch.
+- **Security**: Trusted origin allowlist restricts desktop capabilities to wiki3.ai and *.github.io.
+- **Permission Gating**: User must approve execution (allow once / allow always / deny) before Run is enabled.
+- **Create from Template / Fork**: Authenticated flows for creating or forking wikis on GitHub.
+- **Native Menu**: File / View / Window / Help menus mirroring the dashboard buttons.
 
-## Publishing Workflow
+## Dashboard Flow
+
+Each wiki card on the dashboard exposes a set of buttons driven by which of the three identifying properties (local path / remote / site URL) are set.
+
+### Reordering
+
+- **New wikis appear at the top** of the list (insert order).
+- Drag any card by its header to reorder. The new order is persisted immediately via the `reorder_wikis` command; cards not mentioned in a partial reorder are preserved at the end.
+
+### Commit (local-only)
+
+1. Click **Commit…** on a card with a local path. The dialog shows the current branch and a summary of staged / modified / untracked files.
+2. Enter a commit message. The dialog also offers an **Also publish** checkbox (pre-checked when the wiki's `publish_on_commit` flag is set).
+3. Submit → backend runs `git add -A` + `git commit` in the wiki's `local_path`. If "Also publish" is set, it additionally pushes and enables GitHub Pages.
+
+### Publish (local + remote)
+
+- **Publish** pushes the current branch to `origin`, then best-effort enables GitHub Pages on the remote. The remote site build runs asynchronously on GitHub's side.
+- **Pull** runs `git pull origin <branch>` to refresh the local copy once the remote build has finished.
+
+### Publish on Commit
+
+- Each wiki card with both a local path and a remote has a **Publish on Commit** checkbox under the action row.
+- When checked, the commit dialog pre-checks "Also publish" so a single click does commit → push → Pages-enable in one round-trip.
+- The flag is persisted on the wiki record (`publish_on_commit: bool`) via `set_wiki_publish_on_commit`.
+
+### Build Site
+
+- **Build Site** runs `jupyter lite build` in the wiki's local directory. The resulting static site is written to `_output/` (JupyterLite convention) and can be committed/published as usual.
+- Requires `jupyter` and `jupyterlite-core` to be installed and on PATH; the app surfaces build output in the dialog.
+
+### Planned follow-ups (not in this release)
+
+The following pieces of the "local wiki as a live editing surface" vision need more design work and are tracked for future PRs:
+
+- **Local preview server** — serving a built `_output/` directory to a new in-app window over `http://127.0.0.1:<port>/` so JupyterLite's service worker can work. Design decisions needed: which embedded HTTP server to adopt, per-wiki port lifecycle, and how the trusted-origin allowlist is extended for loopback URLs.
+- **WebStorage ↔ local-file sync** — syncing notebook/markdown edits made in JupyterLite's IndexedDB/localStorage back to the wiki's local repo so they can be committed. This needs a coordinated change in the `wiki3-ai-site` repo's contents manager to route reads/writes through the desktop host bridge (see `src/lib/bridge.ts`).
+
+The backend foundation for these (per-wiki git operations tied to a `local_path`) is already in place in this PR.
+
+## Publishing Workflow (advanced)
+
+The above dashboard flow is the common path. The following auth-based flows are available for creating new repos from templates or forking.
 
 ### GitHub Authentication Setup
 
@@ -118,14 +162,7 @@ TypeScript modules for desktop integration and publishing UI:
 3. Enter the source repo (e.g. `wiki3-ai/wiki3-ai-site`)
 4. The app forks, waits for provisioning, clones with both `origin` and `upstream` remotes
 
-### Committing and Pushing
-
-1. Edit files locally in the workspace directory
-2. Open the workspace's "Commit & Push" panel to see dirty files and status
-3. Enter a commit message, click "Commit & Push"
-4. Push uses token-authenticated HTTPS (token is injected per-push, never stored in `.git/config`)
-
-### Publishing / Updating a Site
+### Publishing / Updating a Site (advanced)
 
 1. Open the workspace's "Publish" panel
 2. The app auto-detects the publish mode:
