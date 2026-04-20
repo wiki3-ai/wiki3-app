@@ -92,6 +92,10 @@ pub struct Wiki {
     pub created_at: DateTime<Utc>,
     /// When this entry was last opened/used.
     pub last_opened_at: DateTime<Utc>,
+    /// If true, a successful commit via the dashboard also pushes and
+    /// publishes the site. Only meaningful when `local_path` is set.
+    #[serde(default)]
+    pub publish_on_commit: bool,
 }
 
 fn default_origin() -> WikiOrigin {
@@ -162,6 +166,7 @@ pub struct UpdateWikiParams {
     pub remote_url: Option<Option<String>>,
     pub site_url: Option<Option<String>>,
     pub description: Option<Option<String>>,
+    pub publish_on_commit: Option<bool>,
 }
 
 /// Parse a GitHub HTTPS / SSH URL into `(owner, repo)`.
@@ -332,6 +337,7 @@ mod tests {
             description: None,
             created_at: now,
             last_opened_at: now,
+            publish_on_commit: false,
         };
         assert!(bad.validate().is_err());
 
@@ -388,11 +394,34 @@ mod tests {
             description: None,
             created_at: now,
             last_opened_at: now,
+            publish_on_commit: false,
         };
         let j = serde_json::to_string(&w).unwrap();
         let back: Wiki = serde_json::from_str(&j).unwrap();
         assert_eq!(back.id, "abc");
         assert_eq!(back.origin, WikiOrigin::Seeded);
         assert_eq!(back.remote.unwrap().visibility, WikiVisibility::Public);
+        assert!(!back.publish_on_commit);
+    }
+
+    /// Old JSON (pre-`publish_on_commit`) must still deserialize.
+    #[test]
+    fn wiki_deserialize_without_publish_on_commit() {
+        let now = Utc::now().to_rfc3339();
+        let json = format!(
+            r#"{{
+                "id": "x",
+                "name": "x",
+                "local_path": null,
+                "remote": null,
+                "site_url": "https://example.com",
+                "origin": "manual",
+                "description": null,
+                "created_at": "{now}",
+                "last_opened_at": "{now}"
+            }}"#
+        );
+        let w: Wiki = serde_json::from_str(&json).unwrap();
+        assert!(!w.publish_on_commit);
     }
 }

@@ -241,6 +241,8 @@ pub fn run() {
             wiki::commands::add_wiki,
             wiki::commands::update_wiki,
             wiki::commands::remove_wiki,
+            wiki::commands::reorder_wikis,
+            wiki::commands::set_wiki_publish_on_commit,
             wiki::commands::restore_default_wikis,
             wiki::commands::get_default_wikis_dir,
             wiki::commands::open_wiki_site,
@@ -248,6 +250,14 @@ pub fn run() {
             wiki::commands::reveal_wiki_local,
             wiki::commands::open_local_repo_as_wiki,
             wiki::commands::clone_wiki,
+            // Per-wiki git + publish
+            wiki::git_commands::wiki_git_status,
+            wiki::git_commands::wiki_commit,
+            wiki::git_commands::wiki_push,
+            wiki::git_commands::wiki_pull,
+            wiki::git_commands::wiki_publish,
+            wiki::git_commands::wiki_commit_and_maybe_publish,
+            wiki::git_commands::wiki_build_site,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

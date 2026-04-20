@@ -99,13 +99,40 @@ impl WikiManager {
     }
 
     /// Add or replace (by id) a wiki, validating it first.
+    /// New wikis are inserted at the top of the list so they appear
+    /// first on the dashboard.
     pub fn add(&self, wiki: Wiki) -> Result<Wiki, WikiError> {
         wiki.validate().map_err(|e| WikiError::Invalid(e.into()))?;
         let mut wikis = self.list()?;
         wikis.retain(|w| w.id != wiki.id);
-        wikis.push(wiki.clone());
+        wikis.insert(0, wiki.clone());
         self.save(&wikis)?;
         Ok(wiki)
+    }
+
+    /// Reorder wikis by the supplied list of ids. Any wiki ids not
+    /// mentioned are appended at the end (in their original order) so
+    /// no entry can be lost by a partial list.
+    pub fn reorder(&self, order: &[String]) -> Result<(), WikiError> {
+        let wikis = self.list()?;
+        let mut by_id: std::collections::HashMap<String, Wiki> = wikis
+            .iter()
+            .map(|w| (w.id.clone(), w.clone()))
+            .collect();
+        let mut result: Vec<Wiki> = Vec::with_capacity(wikis.len());
+        for id in order {
+            if let Some(w) = by_id.remove(id) {
+                result.push(w);
+            }
+        }
+        // Append any remaining wikis (not mentioned in `order`) in their
+        // original order.
+        for w in wikis {
+            if by_id.contains_key(&w.id) {
+                result.push(w);
+            }
+        }
+        self.save(&result)
     }
 
     pub fn remove(&self, id: &str) -> Result<(), WikiError> {
@@ -149,6 +176,9 @@ impl WikiManager {
         if let Some(d) = patch.description {
             w.description = d.filter(|v| !v.is_empty());
         }
+        if let Some(b) = patch.publish_on_commit {
+            w.publish_on_commit = b;
+        }
         w.last_opened_at = Utc::now();
         w.validate().map_err(|e| WikiError::Invalid(e.into()))?;
         let updated = w.clone();
@@ -191,6 +221,7 @@ impl WikiManager {
             description: params.description.filter(|d| !d.is_empty()),
             created_at: now,
             last_opened_at: now,
+            publish_on_commit: false,
         })
     }
 
@@ -229,6 +260,7 @@ fn workspace_to_wiki(ws: &Workspace) -> Wiki {
         description: ws.description.clone(),
         created_at: ws.created_at,
         last_opened_at: ws.last_opened_at,
+        publish_on_commit: false,
     }
 }
 
@@ -268,6 +300,7 @@ fn seeded(owner: &str, repo: &str, description: &str, now: chrono::DateTime<Utc>
         description: Some(description.to_string()),
         created_at: now,
         last_opened_at: now,
+        publish_on_commit: false,
     }
 }
 
@@ -398,5 +431,83 @@ mod tests {
         let dir = tempdir().unwrap();
         let mgr = WikiManager::new(dir.path().to_path_buf());
         assert!(mgr.remove("nope").is_err());
+    }
+
+    fn mk(mgr: &WikiManager, name: &str) -> String {
+        let w = mgr
+            .build_from_params(AddWikiParams {
+                name: Some(name.into()),
+                remote_url: Some(format!("https://github.com/x/{name}")),
+                ..Default::default()
+            })
+            .unwrap();
+        let id = w.id.clone();
+        mgr.add(w).unwrap();
+        id
+    }
+
+    #[test]
+    fn add_prepends_new_wikis() {
+        let dir = tempdir().unwrap();
+        let mgr = WikiManager::new(dir.path().to_path_buf());
+        let a = mk(&mgr, "a");
+        let b = mk(&mgr, "b");
+        let c = mk(&mgr, "c");
+        let names: Vec<_> = mgr
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|w| (w.id, w.name))
+            .collect();
+        // Newest (c) should be first.
+        assert_eq!(names[0].0, c);
+        assert_eq!(names[1].0, b);
+        assert_eq!(names[2].0, a);
+    }
+
+    #[test]
+    fn reorder_moves_entries_by_id() {
+        let dir = tempdir().unwrap();
+        let mgr = WikiManager::new(dir.path().to_path_buf());
+        let a = mk(&mgr, "a");
+        let b = mk(&mgr, "b");
+        let c = mk(&mgr, "c");
+
+        // Ask for order [a, b, c]; current order is [c, b, a].
+        mgr.reorder(&[a.clone(), b.clone(), c.clone()]).unwrap();
+        let ids: Vec<_> = mgr.list().unwrap().into_iter().map(|w| w.id).collect();
+        assert_eq!(ids, vec![a.clone(), b.clone(), c.clone()]);
+    }
+
+    #[test]
+    fn reorder_appends_unmentioned_ids() {
+        let dir = tempdir().unwrap();
+        let mgr = WikiManager::new(dir.path().to_path_buf());
+        let a = mk(&mgr, "a");
+        let b = mk(&mgr, "b");
+        let c = mk(&mgr, "c");
+
+        // Only mention c; a and b should remain at the end in their
+        // original relative order (which is [b, a]).
+        mgr.reorder(&[c.clone()]).unwrap();
+        let ids: Vec<_> = mgr.list().unwrap().into_iter().map(|w| w.id).collect();
+        assert_eq!(ids, vec![c, b, a]);
+    }
+
+    #[test]
+    fn publish_on_commit_roundtrip() {
+        let dir = tempdir().unwrap();
+        let mgr = WikiManager::new(dir.path().to_path_buf());
+        let id = mk(&mgr, "p");
+        assert!(!mgr.get(&id).unwrap().unwrap().publish_on_commit);
+        mgr.update(
+            &id,
+            UpdateWikiParams {
+                publish_on_commit: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(mgr.get(&id).unwrap().unwrap().publish_on_commit);
     }
 }

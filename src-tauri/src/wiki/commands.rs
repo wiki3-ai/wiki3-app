@@ -70,6 +70,34 @@ pub fn remove_wiki(app: AppHandle, wiki_id: String) -> Result<(), String> {
     state.manager.remove(&wiki_id).map_err(err)
 }
 
+/// Reorder dashboard wikis. Any wiki ids not present in `order` are
+/// appended at the end in their current relative order.
+#[command]
+pub fn reorder_wikis(app: AppHandle, order: Vec<String>) -> Result<(), String> {
+    let state = app.state::<WikiState>();
+    state.manager.reorder(&order).map_err(err)
+}
+
+/// Toggle the per-wiki "Publish on Commit" flag.
+#[command]
+pub fn set_wiki_publish_on_commit(
+    app: AppHandle,
+    wiki_id: String,
+    value: bool,
+) -> Result<Wiki, String> {
+    let state = app.state::<WikiState>();
+    state
+        .manager
+        .update(
+            &wiki_id,
+            UpdateWikiParams {
+                publish_on_commit: Some(value),
+                ..Default::default()
+            },
+        )
+        .map_err(err)
+}
+
 /// Restore the default seeded wikis (adds them if not already present).
 #[command]
 pub fn restore_default_wikis(app: AppHandle) -> Result<Vec<Wiki>, String> {
@@ -214,6 +242,7 @@ pub async fn open_local_repo_as_wiki(app: AppHandle, local_path: String) -> Resu
         description: None,
         created_at: chrono::Utc::now(),
         last_opened_at: chrono::Utc::now(),
+        publish_on_commit: false,
     };
 
     state.manager.add(wiki).map_err(err)
@@ -298,6 +327,7 @@ pub async fn clone_wiki(
         description: None,
         created_at: chrono::Utc::now(),
         last_opened_at: chrono::Utc::now(),
+        publish_on_commit: false,
     };
     state.manager.add(wiki).map_err(err)
 }

@@ -32,6 +32,11 @@ impl WorkspaceManager {
         &self.workspaces_dir
     }
 
+    /// Directory where workspace metadata is stored (the app data dir).
+    pub fn storage_dir(&self) -> &Path {
+        &self.storage_dir
+    }
+
     /// Load all persisted workspaces.
     pub fn list_workspaces(&self) -> Result<Vec<Workspace>, WorkspaceError> {
         let path = self.storage_dir.join(WORKSPACES_FILE);
