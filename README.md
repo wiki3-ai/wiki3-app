@@ -4,7 +4,15 @@ Desktop (Mobile planned) App for running Wiki3.ai sites.
 
 ## Overview
 
-Wiki3 for Mac is a macOS desktop app built with **Tauri 2**. On launch it shows a **dashboard** where the user can open any GitHub-hosted Wiki3 site by pasting a repo URL. Each site opens in its own window. Open windows are restored across app launches.
+Wiki3 for Mac is a macOS desktop app built with **Tauri 2**. On launch it shows a **dashboard** of your *wikis* — each wiki is a loose collection of up to three independent properties:
+
+- a **local** git working copy,
+- a **remote** git repository (e.g. GitHub), and
+- a **site URL** (e.g. a GitHub Pages site).
+
+Any one of the three is enough to create a dashboard entry; the others can be added later. Each wiki card exposes three link rows — Local (reveals in the OS file manager), Remote (opens in the system browser), and Site (opens in a new in-app window). Open/closed windows are tracked per wiki so you can close them all at once and reopen them in place.
+
+On first launch, two wikis are seeded: `wiki3-ai/wiki3-ai-site` and `wiki3-ai/wiki3-ai-template`. Removing a seeded wiki does not bring it back — a "Restore defaults" action is provided for that. Entries from the older `workspaces.json` file (if present) are migrated once into `wikis.json`.
 
 The app also supports **Open**, **Run**, and **Publish** flows using the existing JupyterLab/JupyterLite platform, with desktop permission gating and persistent local state.
 
@@ -16,11 +24,14 @@ The app consists of four modular layers:
 
 The Rust backend that provides:
 
-- Dashboard main window with repo URL input for opening sites
-- Site windows opened from GitHub repo URLs (resolved via GitHub Pages API)
+- Dashboard main window with a list of wikis and per-wiki actions
+- Site windows opened from a wiki's site URL (tagged with the owning wiki id)
+- Per-wiki window tracking — close all / reopen all with geometry preserved
+- Native app menu (File / View / Window / Help) with actions mirroring the dashboard
+- Dashboard show/hide toggle (`⌘0`) and remembered dashboard geometry
 - Window state persistence — open site windows are restored on next launch
-- Persistent app data directory for execution policy state and settings
-- Origin-based trust verification (wiki3.ai and *.github.io)
+- Persistent app data directory for wikis, execution policy state, and settings
+- Origin-based trust verification (wiki3.ai, *.github.io, plus user-registered wiki site URLs)
 - Tauri commands exposed to the frontend for desktop integration
 
 ### 2. Desktop Host Layer (`src-tauri/src/`)
@@ -30,8 +41,10 @@ Rust modules implementing the desktop host capabilities:
 - **`config.rs`** — App configuration, trusted origin allowlist, dev URL override
 - **`permissions.rs`** — Execution permission model (allow once / allow always / deny) and execution policy
 - **`host.rs`** — Desktop host state management with persistent policy storage
-- **`commands.rs`** — Tauri commands: host detection, permission state, execution policy, new window management, app settings
-- **`window_state.rs`** — Window state persistence (open site windows, app settings) across app launches
+- **`commands.rs`** — Tauri commands: host detection, permission state, execution policy, new window management, per-wiki window ops, dashboard toggle, external URL open, app settings
+- **`window_state.rs`** — Window state persistence with per-window `wiki_id` / `closed` flags and separate dashboard geometry
+- **`menu.rs`** — Native application menu construction and event routing
+- **`wiki/`** — `Wiki` data model, `WikiManager` (CRUD / seeding / migration) and Tauri commands (`list_wikis`, `add_wiki`, `clone_wiki`, `open_wiki_site`, …)
 
 ### 3. Publishing & Workspace Layer (`src-tauri/src/`)
 
