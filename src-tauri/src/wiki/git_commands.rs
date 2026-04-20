@@ -196,7 +196,13 @@ pub async fn wiki_build_site(
         .current_dir(&path)
         .output()
         .await
-        .map_err(|e| format!("Failed to run `jupyter lite build`: {e}. Is Jupyter installed?"))?;
+        .map_err(|e| {
+            format!(
+                "Failed to run `jupyter lite build`: {e}. \
+                 Make sure `jupyter` and `jupyterlite-core` are installed and on PATH \
+                 (e.g. `pip install jupyterlite-core`)."
+            )
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
