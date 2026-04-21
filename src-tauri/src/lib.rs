@@ -80,7 +80,8 @@ pub fn run() {
             let host_state = DesktopHostState::new(data_dir.clone());
             let publishing_state = PublishingState::new(data_dir.clone());
             let window_state = WindowStateManager::new(data_dir.clone());
-            let wiki_state = WikiState::new(data_dir);
+            let wiki_state = WikiState::new(data_dir.clone());
+            let tools_state = crate::tools::ToolsState::new(data_dir);
 
             // One-time seed + migrate wikis from the legacy workspaces file.
             if let Err(e) = wiki_state
@@ -94,6 +95,7 @@ pub fn run() {
             app.manage(publishing_state);
             app.manage(window_state);
             app.manage(wiki_state);
+            app.manage(tools_state);
 
             // Install the native menu.
             match crate::menu::build_menu(app.handle()) {
@@ -260,6 +262,13 @@ pub fn run() {
             wiki::git_commands::wiki_publish,
             wiki::git_commands::wiki_commit_and_maybe_publish,
             wiki::git_commands::wiki_build_site,
+            // Managed tools (Deno + devcontainer CLI + Apple Container)
+            tools::commands::tools_status,
+            tools::commands::tools_ensure,
+            tools::commands::tools_uninstall,
+            tools::commands::tools_uninstall_all,
+            tools::commands::tools_resolve,
+            tools::commands::detect_apple_container,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

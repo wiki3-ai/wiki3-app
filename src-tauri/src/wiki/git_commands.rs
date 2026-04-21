@@ -171,13 +171,19 @@ pub async fn wiki_commit_and_maybe_publish(
     }
 }
 
-/// Build the JupyterLite static site for a wiki by invoking
-/// `jupyter lite build` in the wiki's local directory.
+/// Build a wiki's static site.
 ///
-/// Requires `jupyter` and the `jupyterlite-core` plugin to be installed
-/// and available on PATH. The built site is written to `_output/` by
-/// default (JupyterLite's convention). Local serving of that directory
-/// is a planned follow-up.
+/// If the repo has a `.devcontainer/` directory, the build runs
+/// inside a Wiki3-managed sandbox: the pinned Deno is ensured,
+/// `@devcontainers/cli` is invoked under it (`devcontainer up` then
+/// `devcontainer exec jupyter lite build`), with `DOCKER_HOST`
+/// pointed at Apple Container's user socket. The user never installs
+/// Node, npm, Homebrew, or the devcontainer CLI themselves — Wiki3
+/// manages those under `<app_data>/tools/`.
+///
+/// If the repo has no `.devcontainer/`, the legacy path runs
+/// `jupyter lite build` directly on the host, for backward
+/// compatibility with existing wikis.
 #[command]
 pub async fn wiki_build_site(
     app: AppHandle,
@@ -187,8 +193,16 @@ pub async fn wiki_build_site(
 
     let wiki = get_wiki(&app, &wiki_id)?;
     let path = require_local(&wiki)?;
-    if !std::path::Path::new(&path).exists() {
+    let path_ref = std::path::Path::new(&path);
+    if !path_ref.exists() {
         return Err(format!("Local path does not exist: {path}"));
+    }
+
+    // Prefer the sandboxed path when the repo declares a devcontainer.
+    if path_ref.join(".devcontainer").exists()
+        || path_ref.join(".devcontainer.json").exists()
+    {
+        return build_site_in_devcontainer(&app, &path).await;
     }
 
     let output = Command::new("jupyter")
@@ -216,9 +230,112 @@ pub async fn wiki_build_site(
 
     Ok(serde_json::json!({
         "success": true,
+        "mode": "host",
         "output_dir": std::path::Path::new(&path).join("_output").to_string_lossy(),
         "stdout": stdout,
         "stderr": stderr,
+    }))
+}
+
+/// Build via `deno run … npm:@devcontainers/cli …`.
+///
+/// 1. Ensure the pinned Deno is installed (first-run only; subsequent
+///    runs are a cache-hit).
+/// 2. Run `devcontainer up` to bring the sandbox up.
+/// 3. Run `devcontainer exec jupyter lite build` inside it.
+///
+/// Apple Container must be installed on the host for step 2 to
+/// succeed — if it isn't we return a structured error asking the UI
+/// to kick off the `.pkg` install flow.
+async fn build_site_in_devcontainer(
+    app: &AppHandle,
+    workspace: &str,
+) -> Result<serde_json::Value, String> {
+    use crate::tools::{apple_container, runner, ToolsState};
+
+    // Gate: Apple Container is required. The UI will turn this into
+    // the "macOS will now ask to install Apple Container" modal.
+    let ac = apple_container::detect();
+    if !ac.installed {
+        return Err(
+            "Apple Container is not installed. Wiki3 can download the official signed \
+             installer and open it so macOS can prompt for approval. \
+             Run `detect_apple_container` from the UI to trigger that flow."
+                .to_string(),
+        );
+    }
+
+    let state = app.state::<ToolsState>();
+    let docker_host = runner::apple_container_docker_host();
+
+    let emit = app.clone();
+    let progress = move |p: crate::tools::installer::InstallProgress| {
+        use tauri::Emitter;
+        let _ = emit.emit(
+            "wiki3://tools/install-progress",
+            serde_json::json!({ "phase": format!("{p:?}") }),
+        );
+    };
+
+    // devcontainer up
+    let up = runner::run_devcontainer(
+        &state,
+        "up",
+        &["--workspace-folder", workspace],
+        std::path::Path::new(workspace),
+        docker_host.as_deref(),
+        progress,
+    )
+    .await?;
+    if !up.success {
+        return Err(format!(
+            "devcontainer up failed (exit {:?}):\n{}",
+            up.status,
+            if up.stderr.trim().is_empty() {
+                &up.stdout
+            } else {
+                &up.stderr
+            }
+        ));
+    }
+
+    // devcontainer exec jupyter lite build
+    let exec = runner::run_devcontainer(
+        &state,
+        "exec",
+        &[
+            "--workspace-folder",
+            workspace,
+            "jupyter",
+            "lite",
+            "build",
+        ],
+        std::path::Path::new(workspace),
+        docker_host.as_deref(),
+        |_| {},
+    )
+    .await?;
+
+    if !exec.success {
+        return Err(format!(
+            "jupyter lite build (in devcontainer) failed (exit {:?}):\n{}",
+            exec.status,
+            if exec.stderr.trim().is_empty() {
+                &exec.stdout
+            } else {
+                &exec.stderr
+            }
+        ));
+    }
+
+    Ok(serde_json::json!({
+        "success": true,
+        "mode": "devcontainer",
+        "deno_path": exec.deno_path.to_string_lossy(),
+        "apple_container_path": ac.path.map(|p| p.to_string_lossy().to_string()),
+        "output_dir": std::path::Path::new(workspace).join("_output").to_string_lossy(),
+        "stdout": exec.stdout,
+        "stderr": exec.stderr,
     }))
 }
 

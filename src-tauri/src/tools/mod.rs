@@ -23,12 +23,16 @@
 //! mismatch — this is the supply-chain boundary. Bumping a pinned
 //! version is a code-review-gated change.
 
+pub mod apple_container;
+pub mod commands;
 pub mod installer;
 pub mod registry;
+pub mod runner;
 pub mod uninstall;
 pub mod updater;
 
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Well-known subdirectory under the Tauri app-data dir that holds all
 /// managed tool installations.
@@ -37,6 +41,33 @@ pub const TOOLS_DIR_NAME: &str = "tools";
 /// Resolve the managed-tools directory for a given app-data root.
 pub fn tools_dir(app_data: &Path) -> PathBuf {
     app_data.join(TOOLS_DIR_NAME)
+}
+
+/// Subdir under `<tools>/deno/<ver>/` used as Deno's `--node-modules-dir`
+/// so npm packages (the devcontainer CLI) are cached per-pin.
+pub const NODE_MODULES_DIRNAME: &str = "node_modules";
+
+/// Tauri-managed state for the tools subsystem. Holds the app-data
+/// root so commands can resolve `<app_data>/tools/` without touching
+/// the `AppHandle` path API on every call.
+pub struct ToolsState {
+    pub app_data: PathBuf,
+    /// Memoized path of a successfully-probed Apple Container binary.
+    /// Populated by [`commands::detect_apple_container`].
+    pub apple_container_path: Mutex<Option<PathBuf>>,
+}
+
+impl ToolsState {
+    pub fn new(app_data: PathBuf) -> Self {
+        Self {
+            app_data,
+            apple_container_path: Mutex::new(None),
+        }
+    }
+
+    pub fn tools_dir(&self) -> PathBuf {
+        tools_dir(&self.app_data)
+    }
 }
 
 /// Errors that can arise anywhere in the managed-tools subsystem.
