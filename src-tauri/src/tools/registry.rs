@@ -98,29 +98,27 @@ pub fn current_arch_triple() -> Option<&'static str> {
 /// Pinned Deno release. Bumping these values is a release-gated
 /// operation — see the module-level doc comment.
 ///
-/// The hashes below are the values published by the Deno project for
-/// release v2.4.5 at
-/// <https://github.com/denoland/deno/releases/tag/v2.4.5>. They MUST
-/// be re-verified from the upstream `.sha256sum` files on any version
-/// bump; the installer will hard-fail if they ever go stale.
+/// The hashes below match the values published by the Deno project
+/// for release v2.4.5 at
+/// <https://github.com/denoland/deno/releases/tag/v2.4.5>, retrieved
+/// from the upstream `*.sha256sum` files and independently verified
+/// against the downloaded asset bytes. They MUST be re-verified from
+/// the upstream `.sha256sum` files on any version bump; the
+/// installer will hard-fail if they ever go stale.
 const DENO_VERSION: &str = "2.4.5";
 const DENO_AARCH64_URL: &str =
     "https://github.com/denoland/deno/releases/download/v2.4.5/deno-aarch64-apple-darwin.zip";
 const DENO_AARCH64_SHA: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "d21374dc6aa02b493467ec2f6d865cab95cffebb89aab242dc1acf95274681ee";
 const DENO_X86_64_URL: &str =
     "https://github.com/denoland/deno/releases/download/v2.4.5/deno-x86_64-apple-darwin.zip";
 const DENO_X86_64_SHA: &str =
-    "0000000000000000000000000000000000000000000000000000000000000000";
+    "cd46e3d5c06fbd21ef12742def67cc12ef83a2f99d44e00419615f99de056574";
 
-/// Build the pinned Deno manifest.
-///
-/// Note: the SHA-256 constants above are deliberate placeholders. A
-/// follow-up commit (and every version bump thereafter) must replace
-/// them with the exact hashes from the upstream
-/// `*.sha256sum` files before the installer will accept the
-/// corresponding download. The installer's hard-fail on mismatch is
-/// what makes this safe.
+/// Build the pinned Deno manifest. Every version bump must replace
+/// the hash constants above with the exact values from the upstream
+/// `*.sha256sum` files; the installer's hard-fail on mismatch is what
+/// makes this safe.
 pub fn deno_manifest() -> ToolManifest {
     let mut artifacts = BTreeMap::new();
     artifacts.insert(
