@@ -239,14 +239,14 @@ pub async fn wiki_build_site(
 
 /// Build via `deno run … npm:@devcontainers/cli …`.
 ///
-/// 1. Ensure the pinned Deno is installed (first-run only; subsequent
-///    runs are a cache-hit).
+/// Deno ships inside the Wiki3 app bundle (see `build.rs` and
+/// `tools::runner::require_bundled_deno`) — no install step is
+/// involved. Apple Container is the only runtime prerequisite.
+///
+/// 1. Verify Apple Container is installed (otherwise return a
+///    structured error so the UI can launch the signed `.pkg`).
 /// 2. Run `devcontainer up` to bring the sandbox up.
 /// 3. Run `devcontainer exec jupyter lite build` inside it.
-///
-/// Apple Container must be installed on the host for step 2 to
-/// succeed — if it isn't we return a structured error asking the UI
-/// to kick off the `.pkg` install flow.
 async fn build_site_in_devcontainer(
     app: &AppHandle,
     workspace: &str,
@@ -258,24 +258,14 @@ async fn build_site_in_devcontainer(
     let ac = apple_container::detect();
     if !ac.installed {
         return Err(
-            "Apple Container is not installed. Wiki3 can download the official signed \
-             installer and open it so macOS can prompt for approval. \
-             Run `detect_apple_container` from the UI to trigger that flow."
+            "Apple Container is not installed. Open the Tools dialog to run the \
+             detection probe and install it before building in a sandbox."
                 .to_string(),
         );
     }
 
     let state = app.state::<ToolsState>();
     let docker_host = runner::apple_container_docker_host();
-
-    let emit = app.clone();
-    let progress = move |p: crate::tools::installer::InstallProgress| {
-        use tauri::Emitter;
-        let _ = emit.emit(
-            "wiki3://tools/install-progress",
-            crate::tools::commands::serialize_progress_payload(&p),
-        );
-    };
 
     // devcontainer up
     let up = runner::run_devcontainer(
@@ -284,7 +274,6 @@ async fn build_site_in_devcontainer(
         &["--workspace-folder", workspace],
         std::path::Path::new(workspace),
         docker_host.as_deref(),
-        progress,
     )
     .await?;
     if !up.success {
@@ -312,7 +301,6 @@ async fn build_site_in_devcontainer(
         ],
         std::path::Path::new(workspace),
         docker_host.as_deref(),
-        |_| {},
     )
     .await?;
 

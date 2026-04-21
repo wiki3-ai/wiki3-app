@@ -10,6 +10,12 @@ import { listen } from '@tauri-apps/api/event';
 import * as wikiApi from './wiki/api';
 import { computeReorder } from './wiki/dashboard-logic';
 import type { TrackedWindowInfo, Wiki } from './wiki/types';
+import {
+  toolsStatus,
+  toolsCacheInfo,
+  toolsClearCache,
+  detectAppleContainer,
+} from './lib/managed-tools';
 
 let wikis: Wiki[] = [];
 let trackedWindows: TrackedWindowInfo[] = [];
@@ -572,6 +578,170 @@ async function openUrlDialog(): Promise<void> {
   }
 }
 
+// ── Tools dialog ─────────────────────────────────────────────────────────
+
+/**
+ * Open the bundled-tools dialog. Shows:
+ *   - Deno: bundled with the app, read-only version + path
+ *   - Apple Container: detection status + "Re-check" button
+ *   - Disposable cache: size + "Clear cache" button
+ *
+ * The dialog deliberately has no "install" buttons: Deno is shipped
+ * inside the .app (see `build.rs`), not installed by the user.
+ */
+async function openToolsDialog(): Promise<void> {
+  const dlg = showDialog(`
+    <h3>Bundled Tools</h3>
+    <p class="w3-muted" style="font-size:13px;margin-bottom:12px;">
+      Deno is bundled inside Wiki3 and is always available. Apple
+      Container is a system-wide dependency installed once via its
+      signed <code>.pkg</code>.
+    </p>
+    <div id="w3-tools-body" style="font-size:13px;">
+      <div class="w3-muted">Loading…</div>
+    </div>
+    <div class="w3-dialog-status" id="w3-tools-status" style="display:none;"></div>
+    <div class="w3-dialog-actions">
+      <button type="button" class="w3-btn" data-tools-act="close">Close</button>
+    </div>`);
+
+  const body = dlg.querySelector('#w3-tools-body') as HTMLElement;
+  const statusEl = dlg.querySelector('#w3-tools-status') as HTMLElement;
+  const closeBtn = dlg.querySelector('[data-tools-act="close"]') as HTMLButtonElement;
+
+  const showStatus = (text: string, isError = false) => {
+    statusEl.style.display = 'block';
+    statusEl.textContent = text;
+    statusEl.classList.toggle('w3-error', isError);
+  };
+  const clearStatus = () => {
+    statusEl.style.display = 'none';
+    statusEl.textContent = '';
+    statusEl.classList.remove('w3-error');
+  };
+
+  closeBtn.addEventListener('click', () => dlg.remove());
+
+  const refreshBody = async () => {
+    body.innerHTML = `<div class="w3-muted">Loading…</div>`;
+    try {
+      const [tools, ac, cache] = await Promise.all([
+        toolsStatus(),
+        detectAppleContainer(),
+        toolsCacheInfo(),
+      ]);
+      body.innerHTML =
+        renderToolsRows(tools) +
+        renderAppleContainerRow(ac) +
+        renderCacheRow(cache);
+    } catch (err) {
+      body.innerHTML = `<div class="w3-error">Failed to load tool status: ${escapeHtml(String(err))}</div>`;
+    }
+  };
+
+  const setBusy = (busy: boolean) => {
+    dlg
+      .querySelectorAll<HTMLButtonElement>('button[data-tools-act], button[data-tools-row-act]')
+      .forEach((b) => (b.disabled = busy));
+  };
+
+  body.addEventListener('click', async (e) => {
+    const btn = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>(
+      '[data-tools-row-act]',
+    );
+    if (!btn) return;
+    const act = btn.getAttribute('data-tools-row-act');
+    if (!act) return;
+    setBusy(true);
+    clearStatus();
+    try {
+      if (act === 'recheck-container') {
+        // fall through to refresh
+      } else if (act === 'clear-cache') {
+        if (
+          !window.confirm(
+            'Clear the Deno + npm caches? They will be repopulated on the next build.',
+          )
+        ) {
+          setBusy(false);
+          return;
+        }
+        await toolsClearCache();
+        showStatus('Cache cleared.');
+      }
+      await refreshBody();
+    } catch (err) {
+      showStatus(String(err), true);
+    } finally {
+      setBusy(false);
+    }
+  });
+
+  await refreshBody();
+}
+
+type ToolsStatusRow = Awaited<ReturnType<typeof toolsStatus>>[number];
+type AppleContainerRow = Awaited<ReturnType<typeof detectAppleContainer>>;
+type CacheRow = Awaited<ReturnType<typeof toolsCacheInfo>>;
+
+function renderToolsRows(rows: ToolsStatusRow[]): string {
+  if (rows.length === 0) {
+    return `<div class="w3-muted">No bundled tools.</div>`;
+  }
+  const items = rows
+    .map((r) => {
+      const pathLine = r.path
+        ? `<div style="font-size:11px;color:#666;font-family:monospace;word-break:break-all;">${escapeHtml(r.path)}</div>`
+        : `<div class="w3-error" style="font-size:12px;">Bundled binary missing — this app build is broken.</div>`;
+      return `
+        <div class="w3-workspace-card" style="padding:12px;">
+          <div class="w3-ws-header" style="margin-bottom:4px;">
+            <strong>${escapeHtml(r.name)}</strong>
+            <span class="w3-ws-provider">bundled v${escapeHtml(r.version)}</span>
+          </div>
+          ${pathLine}
+        </div>`;
+    })
+    .join('');
+  return `<div class="w3-workspace-list" style="margin-bottom:12px;">${items}</div>`;
+}
+
+function renderAppleContainerRow(ac: AppleContainerRow): string {
+  const label = ac.installed
+    ? `<span style="color:#2e7d32;">Installed</span>${
+        ac.path ? ` — <code style="font-size:11px;">${escapeHtml(ac.path)}</code>` : ''
+      }`
+    : `<span style="color:#e65100;">Not installed</span> — needed for sandboxed builds. Install from <a href="https://github.com/apple/container" target="_blank" rel="noopener">apple/container</a>.`;
+  return `
+    <div class="w3-workspace-card" style="padding:12px;margin-bottom:12px;">
+      <div class="w3-ws-header" style="margin-bottom:4px;">
+        <strong>Apple Container</strong>
+        <span class="w3-ws-provider">system</span>
+      </div>
+      <div style="font-size:12px;margin-bottom:8px;">${label}</div>
+      <div class="w3-ws-actions">
+        <button class="w3-btn w3-btn-sm" data-tools-row-act="recheck-container">Re-check</button>
+      </div>
+    </div>`;
+}
+
+function renderCacheRow(c: CacheRow): string {
+  const sizeMb = c.size_bytes > 0 ? `${(c.size_bytes / 1_000_000).toFixed(1)} MB` : 'empty';
+  return `
+    <div class="w3-workspace-card" style="padding:12px;">
+      <div class="w3-ws-header" style="margin-bottom:4px;">
+        <strong>Build cache</strong>
+        <span class="w3-ws-provider">${escapeHtml(sizeMb)}</span>
+      </div>
+      <div style="font-size:11px;color:#666;font-family:monospace;word-break:break-all;margin-bottom:8px;">
+        ${escapeHtml(c.path)}
+      </div>
+      <div class="w3-ws-actions">
+        <button class="w3-btn w3-btn-sm w3-btn-danger" data-tools-row-act="clear-cache" ${c.size_bytes === 0 ? 'disabled' : ''}>Clear cache</button>
+      </div>
+    </div>`;
+}
+
 // ── Event handling ───────────────────────────────────────────────────────
 
 async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
@@ -598,6 +768,9 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         break;
       case 'open-url':
         await openUrlDialog();
+        break;
+      case 'open-tools':
+        await openToolsDialog();
         break;
       case 'restore-defaults':
         await wikiApi.restoreDefaultWikis();

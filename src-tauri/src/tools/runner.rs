@@ -1,64 +1,71 @@
-//! Runner that invokes the managed Deno on the managed devcontainer
-//! CLI. The invocation shape is:
+//! Runner that invokes the **bundled** Deno on the pinned
+//! `@devcontainers/cli` npm package. The invocation shape is:
 //!
 //! ```text
-//! <tools>/deno/<ver>/deno run -A --node-modules-dir=auto \
+//! <Resources>/deno-<triple> run -A --node-modules-dir=<cache>/node_modules \
 //!     npm:@devcontainers/cli@<pin> <subcommand> [args…]
 //! ```
 //!
-//! Deno's Node-compat layer fetches `@devcontainers/cli` from npm on
-//! first use and caches it per-Deno-install. We point
-//! `--node-modules-dir` at a Wiki3-owned path so the cache lives
-//! under `<app_data>/tools/` like everything else and is purged
-//! cleanly by uninstall.
+//! There is no runtime Deno install. Deno is placed in
+//! `<Wiki3.app>/Contents/Resources/` by `build.rs` and resolved via
+//! Tauri's `BaseDirectory::Resource` at command-entry time.
 //!
-//! `DOCKER_HOST` is pointed at Apple Container's UNIX socket so the
-//! devcontainer CLI talks to Apple Container instead of Docker
-//! Desktop. The path Apple Container publishes for its socket is
-//! resolved from the detected binary's install prefix; see
-//! [`apple_container_docker_host`].
+//! `DOCKER_HOST` is pointed at Apple Container's user-scoped UNIX
+//! socket so the devcontainer CLI talks to Apple Container instead of
+//! a non-existent Docker daemon.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use tokio::process::Command;
 
-use super::installer::InstallProgress;
-use super::registry::{self, ToolId};
-use super::{installer, ToolsState, NODE_MODULES_DIRNAME};
+use super::{
+    bundled_deno_path, DENO_DIR_NAME, NODE_MODULES_DIRNAME, ToolsError, ToolsState,
+};
 
 /// Pinned `@devcontainers/cli` version. Bumping this is a release
-/// event, same rules as the Deno pin: code review gated.
+/// event; CI should re-verify compatibility with the bundled Deno.
 pub const DEVCONTAINER_CLI_VERSION: &str = "0.80.0";
 
-/// Ensure Deno is installed, then run the devcontainer CLI under it.
+/// Resolve the absolute path of the bundled Deno binary, erroring if
+/// it is missing (which only happens in broken app builds).
+pub fn require_bundled_deno(state: &ToolsState) -> Result<PathBuf, ToolsError> {
+    let path = bundled_deno_path(&state.resource_dir).ok_or_else(|| {
+        ToolsError::UnsupportedArch {
+            arch: std::env::consts::ARCH.to_string(),
+        }
+    })?;
+    if !path.is_file() {
+        return Err(ToolsError::BundledDenoMissing { path });
+    }
+    Ok(path)
+}
+
+/// Run the bundled devcontainer CLI under the bundled Deno.
 ///
-/// Returns captured stdout/stderr and the exit status. Progress
-/// events from the Deno install (first-run only) flow through
-/// `install_progress`.
+/// Returns captured stdout/stderr and the exit status.
 pub async fn run_devcontainer(
     state: &ToolsState,
     subcommand: &str,
     args: &[&str],
     workspace: &Path,
     docker_host: Option<&str>,
-    install_progress: impl FnMut(InstallProgress),
 ) -> Result<DevcontainerRunOutput, String> {
-    let deno = ensure_deno(state, install_progress).await?;
-    let node_modules_dir = deno
-        .parent()
-        .map(|p| p.join(NODE_MODULES_DIRNAME))
-        .ok_or_else(|| "could not resolve deno install dir".to_string())?;
+    let deno = require_bundled_deno(state).map_err(|e| e.to_string())?;
+
+    // Both caches live under <app_data>/tools-cache/ so "Clear cache"
+    // in the UI can nuke them without touching the bundled binary.
+    let cache_root = state.cache_dir();
+    let node_modules_dir = cache_root.join(NODE_MODULES_DIRNAME);
+    let deno_dir = cache_root.join(DENO_DIR_NAME);
     std::fs::create_dir_all(&node_modules_dir)
         .map_err(|e| format!("create node_modules dir: {e}"))?;
+    std::fs::create_dir_all(&deno_dir).map_err(|e| format!("create deno_dir: {e}"))?;
 
     let mut cmd = Command::new(&deno);
     cmd.arg("run")
         .arg("-A")
-        .arg(format!(
-            "--node-modules-dir={}",
-            node_modules_dir.display()
-        ))
+        .arg(format!("--node-modules-dir={}", node_modules_dir.display()))
         .arg(format!(
             "npm:@devcontainers/cli@{}",
             DEVCONTAINER_CLI_VERSION
@@ -66,21 +73,13 @@ pub async fn run_devcontainer(
         .arg(subcommand)
         .args(args)
         .current_dir(workspace)
+        .env("DENO_DIR", &deno_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
     if let Some(host) = docker_host {
         cmd.env("DOCKER_HOST", host);
     }
-
-    // Never inherit an ambient DENO_DIR that would leak outside our
-    // managed tree; keep Deno's cache rooted next to the pinned install.
-    let deno_dir = deno
-        .parent()
-        .map(|p| p.join("deno_dir"))
-        .ok_or_else(|| "could not resolve deno_dir".to_string())?;
-    std::fs::create_dir_all(&deno_dir).map_err(|e| format!("create deno_dir: {e}"))?;
-    cmd.env("DENO_DIR", &deno_dir);
 
     let output = cmd
         .output()
@@ -103,34 +102,11 @@ pub struct DevcontainerRunOutput {
     pub success: bool,
     pub stdout: String,
     pub stderr: String,
-    /// For logging / telemetry; the absolute path of the Deno binary used.
     pub deno_path: PathBuf,
 }
 
-/// Ensure the pinned Deno is installed under `<tools>/deno/<ver>/`
-/// and return the path to its executable.
-pub async fn ensure_deno(
-    state: &ToolsState,
-    progress: impl FnMut(InstallProgress),
-) -> Result<PathBuf, String> {
-    let tools_dir = state.tools_dir();
-    std::fs::create_dir_all(&tools_dir).map_err(|e| format!("create tools dir: {e}"))?;
-    let manifest = registry::manifest_for(ToolId::Deno);
-    let arch = registry::current_arch_triple()
-        .ok_or_else(|| "managed Deno is only supported on macOS in this build".to_string())?;
-    installer::ensure(&tools_dir, &manifest, arch, progress)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-/// Convert a resolved Apple Container binary path into a `DOCKER_HOST`
-/// URL pointing at its UNIX socket.
-///
-/// Apple Container publishes its socket at
-/// `~/Library/Containers/com.apple.container/Data/container.sock`
-/// (user-scoped; no root), and the CLI is also happy to accept
-/// `unix://` URLs. We resolve it per-user rather than hard-coding
-/// `/var/run/docker.sock`, which does not exist on Apple Container.
+/// Convert Apple Container's install into a `DOCKER_HOST` URL
+/// pointing at its per-user UNIX socket.
 pub fn apple_container_docker_host() -> Option<String> {
     let home = dirs::home_dir()?;
     let sock = home
@@ -147,29 +123,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn devcontainer_cli_version_is_pinned() {
-        assert!(!DEVCONTAINER_CLI_VERSION.trim().is_empty());
-        // Must be a semver-ish string (major.minor.patch) — a simple
-        // guard against a future bump that accidentally leaves a
-        // placeholder.
+    fn devcontainer_cli_version_is_a_pinned_semver() {
         let parts: Vec<_> = DEVCONTAINER_CLI_VERSION.split('.').collect();
-        assert_eq!(parts.len(), 3, "expected X.Y.Z, got {DEVCONTAINER_CLI_VERSION}");
+        assert_eq!(parts.len(), 3);
         for p in parts {
-            assert!(
-                p.chars().all(|c| c.is_ascii_digit()),
-                "non-numeric version component: {p}"
-            );
+            assert!(p.chars().all(|c| c.is_ascii_digit()), "non-numeric: {p}");
         }
     }
 
     #[test]
     fn apple_container_docker_host_is_unix_url() {
-        // On any platform where HOME is set (including CI Linux), the
-        // helper should produce a well-formed unix:// URL pointing at
-        // a user-scoped socket.
         if let Some(url) = apple_container_docker_host() {
             assert!(url.starts_with("unix://"), "got {url}");
             assert!(url.contains("com.apple.container"), "got {url}");
         }
+    }
+
+    #[test]
+    fn require_bundled_deno_errors_when_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app_data = tmp.path().join("data");
+        let resource_dir = tmp.path().join("resources");
+        std::fs::create_dir_all(&app_data).unwrap();
+        std::fs::create_dir_all(&resource_dir).unwrap();
+        let state = ToolsState::new(app_data, resource_dir);
+
+        let err = require_bundled_deno(&state).unwrap_err();
+        // On macOS hosts we get BundledDenoMissing (arch resolves);
+        // on other hosts we get UnsupportedArch (arch is None). Both
+        // are acceptable "not usable" signals.
+        assert!(matches!(
+            err,
+            ToolsError::BundledDenoMissing { .. } | ToolsError::UnsupportedArch { .. }
+        ));
     }
 }

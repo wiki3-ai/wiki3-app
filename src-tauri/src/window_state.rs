@@ -19,19 +19,6 @@ const CASCADE_START_Y: f64 = 60.0;
 /// Max cascade steps before wrapping back to start.
 const CASCADE_MAX: u32 = 12;
 
-/// State of Wiki3-managed CLI tools that the user's device needs in
-/// order to build/serve sites in a sandbox. Each entry maps a tool
-/// name (e.g. `"deno"`) to the installed version as last seen by the
-/// installer. This exists mainly so the UI can show "installed" state
-/// without having to re-scan disk on every render; the source of
-/// truth is still the filesystem under `<app_data>/tools/`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ManagedToolsState {
-    /// Tool name -> installed version string.
-    #[serde(default)]
-    pub installed: HashMap<String, String>,
-}
-
 /// User-facing app settings persisted across launches.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -42,11 +29,6 @@ pub struct AppSettings {
     /// Default base directory for new wiki clones (e.g. `~/Wiki3`).
     #[serde(default)]
     pub default_wikis_dir: Option<String>,
-    /// State of Wiki3-managed CLI tools (Deno, devcontainer CLI, …).
-    /// Added in the Deno/devcontainers migration; defaults to empty
-    /// so older persisted state loads cleanly.
-    #[serde(default)]
-    pub managed_tools: ManagedToolsState,
 }
 
 impl Default for AppSettings {
@@ -55,7 +37,6 @@ impl Default for AppSettings {
             restore_windows: true,
             default_repo_url: DEFAULT_REPO_URL.to_string(),
             default_wikis_dir: None,
-            managed_tools: ManagedToolsState::default(),
         }
     }
 }

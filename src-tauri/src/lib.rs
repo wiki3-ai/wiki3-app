@@ -81,7 +81,14 @@ pub fn run() {
             let publishing_state = PublishingState::new(data_dir.clone());
             let window_state = WindowStateManager::new(data_dir.clone());
             let wiki_state = WikiState::new(data_dir.clone());
-            let tools_state = crate::tools::ToolsState::new(data_dir);
+
+            // The Deno binary bundled by build.rs lives in the app's
+            // Resources directory; resolve it once at startup.
+            let resource_dir = app
+                .path()
+                .resource_dir()
+                .unwrap_or_else(|_| data_dir.clone());
+            let tools_state = crate::tools::ToolsState::new(data_dir, resource_dir);
 
             // One-time seed + migrate wikis from the legacy workspaces file.
             if let Err(e) = wiki_state
@@ -262,12 +269,14 @@ pub fn run() {
             wiki::git_commands::wiki_publish,
             wiki::git_commands::wiki_commit_and_maybe_publish,
             wiki::git_commands::wiki_build_site,
-            // Managed tools (Deno + devcontainer CLI + Apple Container)
+            // Managed tools: Deno is bundled inside the .app, so
+            // there are no install/uninstall commands. Runtime only
+            // reports bundled status, probes Apple Container, and
+            // manages the disposable cache.
             tools::commands::tools_status,
-            tools::commands::tools_ensure,
-            tools::commands::tools_uninstall,
-            tools::commands::tools_uninstall_all,
-            tools::commands::tools_resolve,
+            tools::commands::tools_bundled_deno_path,
+            tools::commands::tools_cache_info,
+            tools::commands::tools_clear_cache,
             tools::commands::detect_apple_container,
         ])
         .run(tauri::generate_context!())
