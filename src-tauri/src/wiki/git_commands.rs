@@ -263,6 +263,17 @@ async fn build_site_in_devcontainer(
                 .to_string(),
         );
     }
+    let container_bin = ac.path.clone().ok_or_else(|| {
+        "Apple Container detection succeeded but returned no path".to_string()
+    })?;
+
+    // Ensure the service (and its UNIX socket) is up. Idempotent —
+    // `container system start` is a no-op if already running. On a
+    // fresh reboot this is what wakes the socket `devcontainer up`
+    // talks to via `DOCKER_HOST`.
+    apple_container::ensure_service_running(&container_bin)
+        .await
+        .map_err(|e| format!("Could not start Apple Container service: {e}"))?;
 
     let state = app.state::<ToolsState>();
     let docker_host = runner::apple_container_docker_host();
@@ -278,13 +289,8 @@ async fn build_site_in_devcontainer(
     .await?;
     if !up.success {
         return Err(format!(
-            "devcontainer up failed (exit {:?}):\n{}",
-            up.status,
-            if up.stderr.trim().is_empty() {
-                &up.stdout
-            } else {
-                &up.stderr
-            }
+            "devcontainer up failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            up.status, up.stderr, up.stdout,
         ));
     }
 
@@ -306,13 +312,8 @@ async fn build_site_in_devcontainer(
 
     if !exec.success {
         return Err(format!(
-            "jupyter lite build (in devcontainer) failed (exit {:?}):\n{}",
-            exec.status,
-            if exec.stderr.trim().is_empty() {
-                &exec.stdout
-            } else {
-                &exec.stderr
-            }
+            "jupyter lite build (in devcontainer) failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            exec.status, exec.stderr, exec.stdout,
         ));
     }
 

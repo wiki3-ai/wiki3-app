@@ -1,6 +1,6 @@
 [package]
 name = "wiki3-app"
-version = "0.2.2"
+version = "0.3.0"
 description = "Desktop app for running Wiki3.ai sites"
 authors = ["Wiki3"]
 edition = "2021"

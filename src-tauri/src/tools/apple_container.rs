@@ -64,6 +64,59 @@ pub fn detect() -> AppleContainerStatus {
     probe_with_dirs(&standard_refs, path_env.as_deref())
 }
 
+/// Ensure the Apple Container system service (which owns the UNIX
+/// socket at `~/Library/Containers/com.apple.container/Data/container.sock`)
+/// is running. Runs `container system start` which is idempotent —
+/// it's a no-op if the service is already up.
+///
+/// On first start Apple Container prompts on stdin to download its
+/// default Kata kernel. We auto-accept by feeding `y\n`; the
+/// alternative (failing with "failed to read user input") leaves the
+/// service half-initialized and unusable.
+///
+/// On first start Apple may also show a system authorization prompt
+/// (sometimes several seconds), and the kernel download itself can
+/// take a while, so we impose a generous timeout.
+pub async fn ensure_service_running(container_bin: &Path) -> Result<(), String> {
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let mut cmd = Command::new(container_bin);
+    cmd.arg("system").arg("start");
+
+    let mut child = cmd
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("spawn `container system start`: {e}"))?;
+
+    // Pre-answer any interactive prompts (e.g. the first-run
+    // "Install the recommended default kernel? [Y/n]"). Closing stdin
+    // afterwards makes non-interactive runs exit cleanly too.
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(b"y\n").await;
+        drop(stdin);
+    }
+
+    // First-run kernel download can take minutes on a slow link.
+    let output = tokio::time::timeout(Duration::from_secs(600), child.wait_with_output())
+        .await
+        .map_err(|_| "`container system start` timed out after 10 minutes".to_string())?
+        .map_err(|e| format!("wait for `container system start`: {e}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "`container system start` failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout),
+        ));
+    }
+    Ok(())
+}
+
 fn split_path_env(path_env: &str) -> Vec<PathBuf> {
     // Mirrors std::env::split_paths without requiring an OsString
     // round-trip; Unix-only because the rest of the tool stack is

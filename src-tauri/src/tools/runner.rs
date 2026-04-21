@@ -2,9 +2,14 @@
 //! `@devcontainers/cli` npm package. The invocation shape is:
 //!
 //! ```text
-//! <Resources>/deno-<triple> run -A --node-modules-dir=<cache>/node_modules \
+//! <Resources>/deno-<triple> run -A --node-modules-dir=none \
 //!     npm:@devcontainers/cli@<pin> <subcommand> [args…]
 //! ```
+//!
+//! `--node-modules-dir=none` keeps Deno from creating a `node_modules`
+//! directory in the user's wiki workspace; the npm package lives in
+//! the global Deno cache, which we pin to `<app_data>/tools-cache/`
+//! via `DENO_DIR`.
 //!
 //! There is no runtime Deno install. Deno is placed in
 //! `<Wiki3.app>/Contents/Resources/` by `build.rs` and resolved via
@@ -19,9 +24,7 @@ use std::process::Stdio;
 
 use tokio::process::Command;
 
-use super::{
-    bundled_deno_path, DENO_DIR_NAME, NODE_MODULES_DIRNAME, ToolsError, ToolsState,
-};
+use super::{bundled_deno_path, DENO_DIR_NAME, ToolsError, ToolsState};
 
 /// Pinned `@devcontainers/cli` version. Bumping this is a release
 /// event; CI should re-verify compatibility with the bundled Deno.
@@ -53,19 +56,19 @@ pub async fn run_devcontainer(
 ) -> Result<DevcontainerRunOutput, String> {
     let deno = require_bundled_deno(state).map_err(|e| e.to_string())?;
 
-    // Both caches live under <app_data>/tools-cache/ so "Clear cache"
-    // in the UI can nuke them without touching the bundled binary.
+    // The DENO_DIR cache lives under <app_data>/tools-cache/ so "Clear
+    // cache" in the UI can nuke it without touching the bundled binary.
+    // We pass --node-modules-dir=none so Deno never materialises a
+    // node_modules folder in the user's wiki workspace; the npm package
+    // is served from DENO_DIR/npm instead.
     let cache_root = state.cache_dir();
-    let node_modules_dir = cache_root.join(NODE_MODULES_DIRNAME);
     let deno_dir = cache_root.join(DENO_DIR_NAME);
-    std::fs::create_dir_all(&node_modules_dir)
-        .map_err(|e| format!("create node_modules dir: {e}"))?;
     std::fs::create_dir_all(&deno_dir).map_err(|e| format!("create deno_dir: {e}"))?;
 
     let mut cmd = Command::new(&deno);
     cmd.arg("run")
         .arg("-A")
-        .arg(format!("--node-modules-dir={}", node_modules_dir.display()))
+        .arg("--node-modules-dir=none")
         .arg(format!(
             "npm:@devcontainers/cli@{}",
             DEVCONTAINER_CLI_VERSION

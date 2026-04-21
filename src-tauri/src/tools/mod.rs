@@ -28,11 +28,8 @@ use std::sync::Mutex;
 /// always safe; it will be repopulated on next build.
 pub const CACHE_DIR_NAME: &str = "tools-cache";
 
-/// Per-Deno subdir for npm packages (`--node-modules-dir`) — keeps
-/// `@devcontainers/cli` and its transitive deps under our tree.
-pub const NODE_MODULES_DIRNAME: &str = "node_modules";
-
-/// Per-Deno subdir for `DENO_DIR` (Deno's own module cache).
+/// Per-Deno subdir for `DENO_DIR` (Deno's own module cache, including
+/// its `npm/` subtree where the `@devcontainers/cli` package lands).
 pub const DENO_DIR_NAME: &str = "deno_dir";
 
 /// Tauri-managed state for the tools subsystem. Holds the two roots
