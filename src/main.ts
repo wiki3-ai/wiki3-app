@@ -24,6 +24,77 @@ const expanded = new Set<string>();
 
 const content = () => document.getElementById('main-content');
 
+// ── Logs panel ───────────────────────────────────────────────────────────
+
+interface LogLine {
+  wiki_id: string | null;
+  source: string;
+  level: 'stdout' | 'stderr' | 'info' | 'error';
+  line: string;
+  ts: number;
+}
+
+const LOG_MAX_LINES = 5000;
+
+function logsPanel(): HTMLElement | null {
+  return document.getElementById('w3-logs-panel');
+}
+
+function logsBody(): HTMLElement | null {
+  return document.getElementById('w3-logs-body');
+}
+
+function setLogsVisible(visible: boolean): void {
+  const panel = logsPanel();
+  if (!panel) return;
+  panel.style.display = visible ? 'flex' : 'none';
+  // Give the content area bottom padding so cards aren't hidden.
+  const main = content();
+  if (main) main.style.paddingBottom = visible ? '248px' : '';
+}
+
+function logsVisible(): boolean {
+  return logsPanel()?.style.display === 'flex';
+}
+
+function appendLog(evt: LogLine): void {
+  const body = logsBody();
+  if (!body) return;
+  const wiki = evt.wiki_id ? (wikis.find((w) => w.id === evt.wiki_id)?.name ?? evt.wiki_id) : '-';
+  const color =
+    evt.level === 'stderr' || evt.level === 'error'
+      ? '#ff8080'
+      : evt.level === 'info'
+        ? '#7cc7ff'
+        : '#e6e6e6';
+  const time = new Date(evt.ts).toLocaleTimeString();
+  const row = document.createElement('div');
+  row.style.color = color;
+  row.textContent = `[${time}] ${wiki} · ${evt.source}: ${evt.line}`;
+  body.appendChild(row);
+  // Cap the number of rendered rows to avoid DOM growth.
+  while (body.childElementCount > LOG_MAX_LINES) {
+    body.removeChild(body.firstChild as Node);
+  }
+  const auto = (document.getElementById('w3-logs-autoscroll') as HTMLInputElement | null)?.checked;
+  if (auto !== false) {
+    body.scrollTop = body.scrollHeight;
+  }
+}
+
+function initLogsPanel(): void {
+  document.getElementById('w3-logs-close')?.addEventListener('click', () => setLogsVisible(false));
+  document.getElementById('w3-logs-clear')?.addEventListener('click', () => {
+    const b = logsBody();
+    if (b) b.innerHTML = '';
+  });
+  void listen<LogLine>('wiki:log', (e) => {
+    appendLog(e.payload);
+    // First log line of a session: auto-reveal so the user can see it.
+    if (!logsVisible()) setLogsVisible(true);
+  });
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function escapeHtml(s: string): string {
@@ -805,6 +876,9 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
       case 'open-tools':
         await openToolsDialog();
         break;
+      case 'toggle-logs':
+        setLogsVisible(!logsVisible());
+        break;
       case 'restore-defaults':
         await wikiApi.restoreDefaultWikis();
         await refresh();
@@ -945,6 +1019,8 @@ async function handleMenuAction(id: string): Promise<void> {
 
 async function init(): Promise<void> {
   console.log('[wiki3-app] Dashboard loading…');
+
+  initLogsPanel();
 
   // Delegated click handling on the page.
   document.addEventListener('click', (e) => {

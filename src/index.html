@@ -302,11 +302,25 @@
       </div>
       <div style="display:flex;align-items:center;gap:8px;">
         <button class="w3-btn" data-action="open-tools" title="Manage bundled tools (Deno, Apple Container)">Tools…</button>
+        <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
         <button class="w3-btn" data-action="open-url" title="Open a wiki by URL">Open URL…</button>
       </div>
     </div>
     <div class="w3-main" id="main-content">
       <div class="w3-loading"><div class="spinner"></div>Loading wikis…</div>
+    </div>
+    <div id="w3-logs-panel" style="display:none;flex-direction:column;position:fixed;left:0;right:0;bottom:0;height:240px;background:#111;color:#e6e6e6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;border-top:1px solid #333;z-index:100;">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px;background:#1b1b1b;border-bottom:1px solid #333;">
+        <div style="font-weight:600;">Container Logs</div>
+        <div style="display:flex;gap:6px;">
+          <label style="font-weight:normal;color:#aaa;">
+            <input type="checkbox" id="w3-logs-autoscroll" checked /> autoscroll
+          </label>
+          <button class="w3-btn w3-btn-sm" id="w3-logs-clear">Clear</button>
+          <button class="w3-btn w3-btn-sm" id="w3-logs-close">Close</button>
+        </div>
+      </div>
+      <div id="w3-logs-body" style="flex:1;overflow:auto;padding:4px 8px;white-space:pre-wrap;word-break:break-all;"></div>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

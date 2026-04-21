@@ -201,26 +201,29 @@ pub async fn wiki_build_site(
     if path_ref.join(".devcontainer").exists()
         || path_ref.join(".devcontainer.json").exists()
     {
-        return build_site_in_devcontainer(&path).await;
+        return build_site_in_devcontainer(&app, &wiki_id, &path).await;
     }
 
-    let output = Command::new("jupyter")
-        .args(["lite", "build"])
-        .current_dir(&path)
-        .output()
-        .await
-        .map_err(|e| {
-            format!(
-                "Failed to run `jupyter lite build`: {e}. \
-                 Make sure `jupyter` and `jupyterlite-core` are installed and on PATH \
-                 (e.g. `pip install jupyterlite-core`)."
-            )
-        })?;
+    crate::wiki::log_stream::emit_info(
+        &app,
+        Some(&wiki_id),
+        "build",
+        format!("host build: jupyter lite build in {path}"),
+    );
+    let mut cmd = Command::new("jupyter");
+    cmd.args(["lite", "build"]).current_dir(&path);
+    let (status, stdout, stderr) =
+        crate::wiki::log_stream::run_and_stream(&app, Some(&wiki_id), "build", cmd)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Failed to run `jupyter lite build`: {e}. \
+                     Make sure `jupyter` and `jupyterlite-core` are installed and on PATH \
+                     (e.g. `pip install jupyterlite-core`)."
+                )
+            })?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-    if !output.status.success() {
+    if !status.success() {
         return Err(format!(
             "jupyter lite build failed:\n{}",
             if stderr.trim().is_empty() { &stdout } else { &stderr }
@@ -246,11 +249,16 @@ pub async fn wiki_build_site(
 /// 5. Run `container run` with the workspace bind-mounted and execute
 ///    the `postCreateCommand` (or `jupyter lite build` as fallback).
 async fn build_site_in_devcontainer(
+    app: &AppHandle,
+    wiki_id: &str,
     workspace: &str,
 ) -> Result<serde_json::Value, String> {
     use crate::tools::{apple_container, devcontainer_config};
+    use crate::wiki::log_stream;
 
     let workspace_path = std::path::Path::new(workspace);
+
+    log_stream::emit_info(app, Some(wiki_id), "build", "Detecting Apple Container…");
 
     // --- 1. Apple Container must be installed ---
     let ac = apple_container::detect();
@@ -265,6 +273,19 @@ async fn build_site_in_devcontainer(
     let container_bin = ac.path.clone().ok_or_else(|| {
         "Apple Container detection succeeded but returned no path".to_string()
     })?;
+
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "build",
+        format!("Using container binary: {}", container_bin.display()),
+    );
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "build",
+        "Ensuring container service is running (may take a while on first run)…",
+    );
 
     // --- 2. Ensure the service (and its socket) are up ---
     apple_container::ensure_service_running(&container_bin)
@@ -284,6 +305,13 @@ async fn build_site_in_devcontainer(
     let cfg = devcontainer_config::load_config(&cfg_path)
         .map_err(|e| format!("Failed to parse {}: {e}", cfg_path.display()))?;
 
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "build",
+        format!("Parsed devcontainer: {}", cfg_path.display()),
+    );
+
     // The directory containing devcontainer.json — build paths in the
     // config are relative to this.
     let cfg_dir = cfg_path
@@ -297,6 +325,12 @@ async fn build_site_in_devcontainer(
         .and_then(|s| s.to_str())
         .unwrap_or("wiki");
     let image_ref = if let Some(img) = cfg.image.as_deref() {
+        log_stream::emit_info(
+            app,
+            Some(wiki_id),
+            "build",
+            format!("Using pre-built image: {img}"),
+        );
         img.to_string()
     } else if let Some(build) = cfg.build.as_ref() {
         let dockerfile = build.dockerfile.as_deref().unwrap_or("Dockerfile");
@@ -305,23 +339,36 @@ async fn build_site_in_devcontainer(
         let dockerfile_abs = cfg_dir.join(dockerfile);
         let tag = format!("wiki3-build-{}:latest", sanitize_tag(workspace_name));
 
-        let build_out = tokio::process::Command::new(&container_bin)
+        log_stream::emit_info(
+            app,
+            Some(wiki_id),
+            "image-build",
+            format!("Building image {tag} from {}", dockerfile_abs.display()),
+        );
+
+        let mut build_cmd = tokio::process::Command::new(&container_bin);
+        build_cmd
             .arg("build")
             .arg("--tag")
             .arg(&tag)
             .arg("--file")
             .arg(&dockerfile_abs)
-            .arg(&context_abs)
-            .output()
-            .await
-            .map_err(|e| format!("failed to spawn `container build`: {e}"))?;
+            .arg(&context_abs);
 
-        if !build_out.status.success() {
+        let (status, stdout, stderr) = log_stream::run_and_stream(
+            app,
+            Some(wiki_id),
+            "image-build",
+            build_cmd,
+        )
+        .await?;
+
+        if !status.success() {
             return Err(format!(
                 "container build failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
-                build_out.status.code(),
-                String::from_utf8_lossy(&build_out.stderr),
-                String::from_utf8_lossy(&build_out.stdout),
+                status.code(),
+                stderr,
+                stdout,
             ));
         }
         tag
@@ -334,10 +381,6 @@ async fn build_site_in_devcontainer(
     };
 
     // --- 5. Build the shell command to run inside the container ---
-    //
-    // Prefer the devcontainer's `postCreateCommand` since that's what
-    // the wiki3 templates use to drive the build. Fall back to a
-    // plain `jupyter lite build` otherwise.
     let cmd_str = cfg
         .post_create_command
         .as_ref()
@@ -346,6 +389,13 @@ async fn build_site_in_devcontainer(
 
     let mount_arg = format!("{}:/workspaces/{workspace_name}", workspace);
     let workdir = format!("/workspaces/{workspace_name}");
+
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "build",
+        format!("container run --volume {mount_arg} -- bash -lc {cmd_str}"),
+    );
 
     let mut run_cmd = tokio::process::Command::new(&container_bin);
     run_cmd
@@ -366,22 +416,27 @@ async fn build_site_in_devcontainer(
         .arg("-lc")
         .arg(&cmd_str);
 
-    let exec = run_cmd
-        .output()
-        .await
-        .map_err(|e| format!("failed to spawn `container run`: {e}"))?;
+    let (status, stdout, stderr) =
+        log_stream::run_and_stream(app, Some(wiki_id), "build", run_cmd).await?;
 
-    let stdout = String::from_utf8_lossy(&exec.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&exec.stderr).to_string();
-
-    if !exec.status.success() {
+    if !status.success() {
         return Err(format!(
             "container run failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
-            exec.status.code(),
+            status.code(),
             stderr,
             stdout,
         ));
     }
+
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "build",
+        format!(
+            "Built successfully → {}",
+            workspace_path.join("_output").display()
+        ),
+    );
 
     Ok(serde_json::json!({
         "success": true,
@@ -398,7 +453,7 @@ async fn build_site_in_devcontainer(
 /// Convert a `postCreateCommand` JSON value into a single shell
 /// command string. The devcontainer spec allows string, array, or
 /// object forms; we support the two common ones.
-fn value_to_shell_command(v: &serde_json::Value) -> Option<String> {
+pub(crate) fn value_to_shell_command(v: &serde_json::Value) -> Option<String> {
     match v {
         serde_json::Value::String(s) => Some(s.clone()),
         serde_json::Value::Array(items) => {
@@ -418,7 +473,7 @@ fn value_to_shell_command(v: &serde_json::Value) -> Option<String> {
 
 /// Minimal POSIX shell quoter — wraps in single quotes, escaping any
 /// embedded single quotes.
-fn shell_quote(s: &str) -> String {
+pub(crate) fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 

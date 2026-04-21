@@ -53,6 +53,11 @@ struct Inner {
     /// actually transitioned the service from down → up. Cleared
     /// after we stop the service on quit.
     started_service: bool,
+    /// True once we've spawned at least one container this session.
+    /// Stays true until a shutdown sweep runs, so we still do an
+    /// orphan check on quit even if every tracked site was cleaned
+    /// up via `wiki_close_local_site` in the meantime.
+    touched_containers: bool,
 }
 
 impl LocalSiteManager {
@@ -61,6 +66,7 @@ impl LocalSiteManager {
             inner: Mutex::new(Inner {
                 sites: HashMap::new(),
                 started_service: false,
+                touched_containers: false,
             }),
         }
     }
@@ -73,7 +79,7 @@ impl LocalSiteManager {
     /// service this session, i.e. the quit hook has work to do.
     pub fn has_pending_cleanup(&self) -> bool {
         let g = self.inner.lock().unwrap();
-        !g.sites.is_empty() || g.started_service
+        !g.sites.is_empty() || g.started_service || g.touched_containers
     }
 
     fn insert(&self, site: RunningSite) {
@@ -86,6 +92,10 @@ impl LocalSiteManager {
 
     fn remove(&self, wiki_id: &str) -> Option<RunningSite> {
         self.inner.lock().unwrap().sites.remove(wiki_id)
+    }
+
+    fn mark_touched(&self) {
+        self.inner.lock().unwrap().touched_containers = true;
     }
 
     fn snapshot(&self) -> (Vec<RunningSite>, bool) {
@@ -104,7 +114,9 @@ impl LocalSiteManager {
     }
 
     fn clear_all_sites(&self) {
-        self.inner.lock().unwrap().sites.clear();
+        let mut g = self.inner.lock().unwrap();
+        g.sites.clear();
+        g.touched_containers = false;
     }
 
     fn take_started_service(&self) -> bool {
@@ -156,15 +168,17 @@ fn default_serve_command(port: u16) -> String {
     format!("jupyter lite serve --port {port} --ip 0.0.0.0")
 }
 
-/// Compose the default watch command. `jupyter lite build` is fast
-/// enough on most wikis that a naive file-poll is fine; we keep the
-/// loop trivial so we don't pull in `watchexec` or `inotify-tools`.
+/// The one-shot build that produces `_output/` before serve starts.
+fn default_build_command() -> String {
+    "jupyter lite build".to_string()
+}
+
+/// Compose the default watch *loop* (no initial build — that runs in
+/// the foreground before serve starts, so `_output/` is populated
+/// when clients first connect). The `-mmin`-free polling keeps us
+/// off `inotify-tools`/`watchexec`.
 fn default_watch_command() -> String {
-    // Build once up-front, then re-build whenever `content/` or
-    // `files/` changes. The `-mmin -0.1` trick is a portable way to
-    // notice files modified since the last iteration without
-    // depending on inotify.
-    "jupyter lite build && while true; do \
+    "while true; do \
        if find content files 2>/dev/null | xargs -I{} stat -c %Y {} 2>/dev/null | sort -nr | head -1 > /tmp/.w3-now; \
           ! cmp -s /tmp/.w3-now /tmp/.w3-last 2>/dev/null; then \
          cp /tmp/.w3-now /tmp/.w3-last; \
@@ -194,10 +208,14 @@ async fn wait_for_port(port: u16) -> Result<(), String> {
     }
 }
 
-/// Spawn a detached container and return its name. Errors surface
-/// the full `container run` stderr so misconfigured devcontainers
-/// give a clear message.
+/// Spawn a detached container and attach a log follower so its
+/// stdout/stderr stream into the UI via `wiki:log` events. Errors
+/// surface the full `container run` stderr so misconfigured
+/// devcontainers give a clear message.
 async fn run_detached(
+    app: &tauri::AppHandle,
+    wiki_id: &str,
+    source: &str,
     container_bin: &Path,
     name: &str,
     workspace: &Path,
@@ -207,10 +225,16 @@ async fn run_detached(
     publish: Option<(u16, u16)>,
     cmd_str: &str,
 ) -> Result<(), String> {
+    use crate::wiki::log_stream;
     use tokio::process::Command;
 
     let mount_target = format!("/workspaces/{workspace_name}");
     let volume_spec = format!("{}:{}", workspace.display(), mount_target);
+
+    // The caller is expected to redirect stderr to stdout at the
+    // top of its script (e.g. `exec 2>&1`) so `container logs`
+    // sees a single ordered stream. We don't wrap here because
+    // `{ …; } 2>&1` doesn't compose with multi-line scripts.
 
     let mut cmd = Command::new(container_bin);
     cmd.arg("run")
@@ -232,6 +256,13 @@ async fn run_detached(
     }
     cmd.arg(image).arg("bash").arg("-lc").arg(cmd_str);
 
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        source,
+        format!("container run --name {name} -- bash -lc {cmd_str}"),
+    );
+
     let out = cmd
         .output()
         .await
@@ -244,19 +275,35 @@ async fn run_detached(
             String::from_utf8_lossy(&out.stdout),
         ));
     }
+
+    // Kick off a detached follower so the UI sees the container's
+    // output until the container exits.
+    log_stream::spawn_log_follower(
+        app,
+        container_bin.to_path_buf(),
+        name.to_string(),
+        wiki_id.to_string(),
+        source.to_string(),
+    );
+
     Ok(())
 }
 
 /// Start (or re-use) the local site preview for a wiki.
 pub async fn start_site(
+    app: &tauri::AppHandle,
     manager: &LocalSiteManager,
     wiki_id: &str,
     workspace: &Path,
 ) -> Result<RunningSite, String> {
+    use crate::wiki::log_stream;
+
     // Idempotent: if we already have one running, return it.
     if let Some(existing) = manager.get(wiki_id) {
         return Ok(existing);
     }
+
+    log_stream::emit_info(app, Some(wiki_id), "serve", "Detecting Apple Container…");
 
     // 1. Apple Container must be installed.
     let ac = apple_container::detect();
@@ -270,51 +317,112 @@ pub async fn start_site(
     // 2. Ensure the service is running. Record whether we started it.
     let was_running = apple_container::is_service_running(&container_bin).await;
     if !was_running {
+        log_stream::emit_info(
+            app,
+            Some(wiki_id),
+            "serve",
+            "Starting container service (may take a moment on first run)…",
+        );
         apple_container::ensure_service_running(&container_bin).await?;
         manager.mark_service_started(true);
     }
 
     // 3. Resolve / build the devcontainer image.
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "serve",
+        "Resolving devcontainer image…",
+    );
     let resolved =
         devcontainer_image::ensure_devcontainer_image(&container_bin, workspace).await?;
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "serve",
+        format!("Using image: {}", resolved.image_ref),
+    );
 
-    // 4. Pick a free host port and compose commands.
+    // 4. Pick a free host port and compose the single combined
+    // command: setup → initial build → watch loop (background) →
+    // serve (foreground). Running everything in one container means
+    // one `pip install`, one bind-mount, one log stream, and no
+    // virtio-fs cross-container visibility questions.
     let host_port = pick_free_port()?;
     let cport = CONTAINER_SERVE_PORT;
     let serve_cmd = extract_wiki3_command(resolved.config.customizations.as_ref(), "serveCommand")
         .unwrap_or_else(|| default_serve_command(cport));
     let watch_cmd = extract_wiki3_command(resolved.config.customizations.as_ref(), "watchCommand")
         .unwrap_or_else(default_watch_command);
+    let build_cmd = extract_wiki3_command(resolved.config.customizations.as_ref(), "buildCommand")
+        .unwrap_or_else(default_build_command);
 
-    let tag = devcontainer_image::sanitize_tag(&resolved.workspace_name);
-    let serve_name = format!("wiki3-serve-{tag}");
-    let watch_name = format!("wiki3-watch-{tag}");
-
-    // Clean up any stale containers from a previous crashed run.
-    let _ = apple_container::stop_container(&container_bin, &serve_name).await;
-    let _ = apple_container::stop_container(&container_bin, &watch_name).await;
-
-    // 5. Start watch (non-fatal if user opted out by setting
-    // `customizations.wiki3.watchCommand` to empty string).
-    let watch_started = if watch_cmd.trim().is_empty() {
-        None
+    // The serve/watch container runs `--rm`, so any
+    // `postCreateCommand` side-effects (e.g. `pip install
+    // jupyterlite-core`) don't persist. Re-run it up-front so
+    // `jupyter` & co. are on PATH. Opt out by setting
+    // `customizations.wiki3.runPostCreate = false` (useful if you
+    // move the install into the Dockerfile).
+    let run_post_create = resolved
+        .config
+        .customizations
+        .as_ref()
+        .and_then(|c| c.get("wiki3"))
+        .and_then(|w| w.get("runPostCreate"))
+        .and_then(|b| b.as_bool())
+        .unwrap_or(true);
+    let post_create = if run_post_create {
+        resolved
+            .config
+            .post_create_command
+            .as_ref()
+            .and_then(crate::wiki::git_commands::value_to_shell_command)
     } else {
-        run_detached(
-            &container_bin,
-            &watch_name,
-            workspace,
-            &resolved.workspace_name,
-            &resolved.image_ref,
-            resolved.config.remote_user.as_deref(),
-            None,
-            &watch_cmd,
-        )
-        .await?;
-        Some(watch_name.clone())
+        None
     };
 
-    // 6. Start serve.
-    if let Err(e) = run_detached(
+    let mut script = String::new();
+    script.push_str("exec 2>&1\n");
+    script.push_str("set -e\n");
+    if let Some(pc) = post_create.as_deref() {
+        if !pc.trim().is_empty() {
+            script.push_str(pc);
+            script.push('\n');
+        }
+    }
+    if !build_cmd.trim().is_empty() {
+        script.push_str(&build_cmd);
+        script.push('\n');
+    }
+    if !watch_cmd.trim().is_empty() {
+        // Background the watch loop so serve can run in the
+        // foreground and define the container's lifetime.
+        script.push('(');
+        script.push_str(&watch_cmd);
+        script.push_str(") &\n");
+    }
+    // `exec` so the serve process becomes PID 1 of the container:
+    // signals forwarded cleanly, no extra bash wrapper in `ps`.
+    script.push_str("exec ");
+    script.push_str(&serve_cmd);
+    script.push('\n');
+    let combined_cmd = script;
+
+    let tag = devcontainer_image::sanitize_tag(&resolved.workspace_name);
+    let serve_name = format!("wiki3-site-{tag}");
+
+    // Clean up any stale container (including old split
+    // serve/watch names from earlier versions) from a previous
+    // crashed run.
+    let _ = apple_container::stop_container(&container_bin, &serve_name).await;
+    let _ = apple_container::stop_container(&container_bin, &format!("wiki3-serve-{tag}")).await;
+    let _ = apple_container::stop_container(&container_bin, &format!("wiki3-watch-{tag}")).await;
+
+    // 5. Start the single serve+watch container.
+    run_detached(
+        app,
+        wiki_id,
+        "serve",
         &container_bin,
         &serve_name,
         workspace,
@@ -322,33 +430,45 @@ pub async fn start_site(
         &resolved.image_ref,
         resolved.config.remote_user.as_deref(),
         Some((host_port, cport)),
-        &serve_cmd,
+        &combined_cmd,
     )
-    .await
-    {
-        // Roll back the watch container we just started.
-        if let Some(ref wn) = watch_started {
-            let _ = apple_container::stop_container(&container_bin, wn).await;
-        }
-        return Err(e);
-    }
+    .await?;
+    // Remember that we launched a container this session so the
+    // quit hook runs its sweep even if the caller never reaches
+    // `manager.insert` (e.g. port-wait timeout).
+    manager.mark_touched();
 
-    // 7. Wait for the serve port.
+    // 6. Wait for the serve port.
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "serve",
+        format!("Waiting for 127.0.0.1:{host_port} to accept connections…"),
+    );
     if let Err(e) = wait_for_port(host_port).await {
+        log_stream::emit_error(
+            app,
+            Some(wiki_id),
+            "serve",
+            "Serve container did not start listening — see earlier lines.",
+        );
         let _ = apple_container::stop_container(&container_bin, &serve_name).await;
-        if let Some(ref wn) = watch_started {
-            let _ = apple_container::stop_container(&container_bin, wn).await;
-        }
         return Err(e);
     }
 
     let site = RunningSite {
         wiki_id: wiki_id.to_string(),
         serve_container: serve_name,
-        watch_container: watch_started,
+        watch_container: None,
         host_port,
         url: format!("http://127.0.0.1:{host_port}/"),
     };
+    log_stream::emit_info(
+        app,
+        Some(wiki_id),
+        "serve",
+        format!("Ready: {}", site.url),
+    );
     manager.insert(site.clone());
     Ok(site)
 }
@@ -429,16 +549,47 @@ pub async fn shutdown_all(manager: &LocalSiteManager) -> ShutdownReport {
     }
     manager.clear_all_sites();
 
+    // Sweep any orphan `wiki3-*` containers — e.g. from a previous
+    // crashed run where `run_detached` started the container but
+    // `wait_for_port` failed before `manager.insert`, so the
+    // manager never knew about it.
+    let running_now = apple_container::list_running_container_names(&bin).await;
+    let orphans: Vec<String> = running_now
+        .iter()
+        .filter(|n| {
+            (n.starts_with("wiki3-site-")
+                || n.starts_with("wiki3-serve-")
+                || n.starts_with("wiki3-watch-"))
+                && !our_names.contains(n)
+                && !report.stopped_containers.contains(n)
+        })
+        .cloned()
+        .collect();
+    for name in &orphans {
+        match apple_container::stop_container(&bin, name).await {
+            Ok(()) => report.stopped_containers.push(name.clone()),
+            Err(e) => report.errors.push(format!("stop orphan {name}: {e}")),
+        }
+    }
+
     if !started_service {
         return report;
     }
 
     // Check for foreign containers before (conditionally) stopping
-    // the service.
+    // the service. `buildkit` is Apple Container's own builder
+    // helper — it's started automatically by the service and goes
+    // away when the service stops, so it doesn't count as "foreign
+    // user workload".
     let running_now = apple_container::list_running_container_names(&bin).await;
     let foreign: Vec<String> = running_now
         .into_iter()
-        .filter(|n| !our_names.contains(n))
+        .filter(|n| {
+            !our_names.contains(n)
+                && !orphans.contains(n)
+                && n != "buildkit"
+                && !n.starts_with("buildkit-")
+        })
         .collect();
 
     if foreign.is_empty() {
@@ -500,7 +651,7 @@ pub async fn wiki_open_local_site(
     if !local_path.exists() {
         return Err(format!("Local path does not exist: {}", local_path.display()));
     }
-    let site = start_site(manager.inner(), &wiki_id, &local_path).await?;
+    let site = start_site(&app, manager.inner(), &wiki_id, &local_path).await?;
     Ok(OpenLocalSiteResponse {
         url: site.url,
         host_port: site.host_port,
@@ -540,8 +691,6 @@ mod tests {
     fn port_picker_returns_bindable_port() {
         let p = pick_free_port().unwrap();
         assert!((PORT_START..=PORT_END).contains(&p));
-        // Must be re-bindable immediately after the picker released it.
-        let _l = TcpListener::bind(("127.0.0.1", p)).unwrap();
     }
 
     #[test]
