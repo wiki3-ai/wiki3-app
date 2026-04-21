@@ -217,6 +217,9 @@ function renderCard(w: Wiki): string {
   const buildBtn = hasLocal
     ? `<button class="w3-btn w3-btn-sm" data-action="build-site" data-id="${escapeHtml(w.id)}" title="Run &#x60;jupyter lite build&#x60; in the local repo">Build Site</button>`
     : '';
+  const openLocalSiteBtn = hasLocal
+    ? `<button class="w3-btn w3-btn-sm" data-action="open-local-site" data-id="${escapeHtml(w.id)}" title="Serve &amp; watch the wiki in a container and open it in a new window">Open Local Site</button>`
+    : '';
   const pullBtn = hasLocal && hasRemote
     ? `<button class="w3-btn w3-btn-sm" data-action="pull-wiki" data-id="${escapeHtml(w.id)}" title="git pull origin">Pull</button>`
     : '';
@@ -291,6 +294,7 @@ function renderCard(w: Wiki): string {
         ${commitBtn}
         ${publishBtn}
         ${buildBtn}
+        ${openLocalSiteBtn}
         ${pullBtn}
         ${remoteBtn}
         ${revealBtn}
@@ -541,6 +545,35 @@ async function buildSite(wikiId: string): Promise<void> {
   try {
     const result = await wikiApi.wikiBuildSite(wikiId);
     status.textContent = `Built successfully → ${result.output_dir}`;
+  } catch (err) {
+    status.classList.add('w3-error');
+    status.textContent = String(err);
+  }
+  closeBtn.disabled = false;
+  closeBtn.addEventListener('click', () => dlg.remove());
+}
+
+async function openLocalSite(wikiId: string): Promise<void> {
+  const w = wikis.find((x) => x.id === wikiId);
+  if (!w) return;
+  const dlg = showDialog(`
+    <h3>Opening Local Site — ${escapeHtml(w.name)}</h3>
+    <div class="w3-muted" style="font-size:13px;">
+      Starting the serve &amp; watch containers in Apple Container.
+      This can take a moment on first run while the image is built.
+    </div>
+    <div class="w3-dialog-status" id="serve-status" style="display:block;margin-top:12px;">Working…</div>
+    <div class="w3-dialog-actions">
+      <button type="button" class="w3-btn" data-act="close" disabled>Close</button>
+    </div>`);
+  const status = dlg.querySelector('#serve-status') as HTMLElement;
+  const closeBtn = dlg.querySelector('[data-act="close"]') as HTMLButtonElement;
+  try {
+    const { url } = await wikiApi.wikiOpenLocalSite(wikiId);
+    status.textContent = `Serving on ${url} — opening window…`;
+    await wikiApi.openNewWindowForWiki(url, wikiId);
+    dlg.remove();
+    return;
   } catch (err) {
     status.classList.add('w3-error');
     status.textContent = String(err);
@@ -861,6 +894,9 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         break;
       case 'build-site':
         await buildSite(id);
+        break;
+      case 'open-local-site':
+        await openLocalSite(id);
         break;
       case 'toggle-publish-on-commit': {
         const checked = (target as HTMLInputElement).checked;

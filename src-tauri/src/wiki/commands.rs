@@ -332,27 +332,33 @@ pub async fn clone_wiki_into(
         ));
     }
 
-    let remote = remote_from_url(&remote_url);
-    let site_url = remote
-        .as_ref()
-        .map(|r| derive_github_pages_url(&r.owner, &r.repo));
-    let name = remote
-        .as_ref()
-        .map(|r| r.repo.clone())
-        .or_else(|| {
-            std::path::Path::new(&target_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(|s| s.to_string())
-        })
+    // A freshly-cloned wiki is an independent working copy: it has no
+    // remote-of-record and no site URL until the user creates them
+    // (e.g. via "New Site from Template" or by pushing to their own
+    // repo). We therefore:
+    //   * strip the `origin` remote left by `git clone` (which points
+    //     at the source we cloned from — typically a template) so
+    //     `git push`/`git pull` won't silently target it, and
+    //   * leave `remote` / `site_url` blank on the Wiki record.
+    let _ = Command::new("git")
+        .args(["remote", "remove", "origin"])
+        .current_dir(&target_path)
+        .output()
+        .await;
+
+    let name = std::path::Path::new(&target_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string())
+        .or_else(|| remote_from_url(&remote_url).map(|r| r.repo))
         .unwrap_or_else(|| "wiki".into());
 
     let wiki = Wiki {
         id: uuid::Uuid::new_v4().to_string(),
         name,
         local_path: Some(target_path),
-        remote,
-        site_url,
+        remote: None,
+        site_url: None,
         origin: WikiOrigin::Clone,
         description: None,
         created_at: chrono::Utc::now(),
@@ -446,8 +452,27 @@ mod tests {
 
         assert_eq!(wiki.origin, WikiOrigin::Clone);
         assert_eq!(wiki.local_path.as_deref(), Some(target.as_str()));
+        // A freshly-cloned wiki carries no remote-of-record or site
+        // URL — those are set when the user pushes to their own repo.
+        assert!(wiki.remote.is_none(), "cloned wiki should not carry a remote");
+        assert!(wiki.site_url.is_none(), "cloned wiki should not carry a site url");
+        // Name defaults to the target directory basename.
+        assert_eq!(wiki.name, "cloned");
         // The cloned target must now contain a .git folder.
         assert!(std::path::Path::new(&target).join(".git").exists());
+        // The original `origin` remote (pointing at the source we
+        // cloned from) must have been removed.
+        let remotes = tokio::process::Command::new("git")
+            .args(["remote"])
+            .current_dir(&target)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&remotes.stdout).trim().is_empty(),
+            "expected no git remotes after clone, got: {:?}",
+            String::from_utf8_lossy(&remotes.stdout)
+        );
         // The wiki should be persisted and listed.
         let listed = manager.list().unwrap();
         assert!(listed.iter().any(|w| w.id == wiki.id));

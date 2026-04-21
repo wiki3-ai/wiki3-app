@@ -138,6 +138,38 @@ export function wikiBuildSite(
   );
 }
 
+/**
+ * Start a local preview server (serve + watch) for the wiki inside
+ * Apple Container. Returns the loopback URL to open in a new window.
+ */
+export function wikiOpenLocalSite(
+  wikiId: string,
+): Promise<{ url: string; host_port: number }> {
+  return invoke<{ url: string; host_port: number }>('wiki_open_local_site', { wikiId });
+}
+
+/** Stop the preview containers for a wiki (best-effort). */
+export function wikiCloseLocalSite(wikiId: string): Promise<void> {
+  return invoke<void>('wiki_close_local_site', { wikiId });
+}
+
+export interface RunningSite {
+  wiki_id: string;
+  serve_container: string;
+  watch_container: string | null;
+  host_port: number;
+  url: string;
+}
+
+export function wikiLocalSiteStatus(wikiId: string): Promise<RunningSite | null> {
+  return invoke<RunningSite | null>('wiki_local_site_status', { wikiId });
+}
+
+/** Open an arbitrary URL in a new in-app window tagged to a wiki. */
+export function openNewWindowForWiki(url: string, wikiId: string): Promise<void> {
+  return invoke<void>('open_new_window_for_wiki', { url, wikiId });
+}
+
 // ── Per-wiki window tracking ─────────────────────────────────────────────
 
 export function listWikiWindows(wikiId: string): Promise<TrackedWindowInfo[]> {

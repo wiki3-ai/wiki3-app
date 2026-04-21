@@ -13,6 +13,7 @@
 pub mod apple_container;
 pub mod commands;
 pub mod devcontainer_config;
+pub mod devcontainer_image;
 
 use std::path::PathBuf;
 use std::sync::Mutex;

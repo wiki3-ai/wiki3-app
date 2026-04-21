@@ -117,6 +117,111 @@ pub async fn ensure_service_running(container_bin: &Path) -> Result<(), String> 
     Ok(())
 }
 
+/// Probe whether the Apple Container service is currently running.
+/// We run `container ls -q` with a short timeout; the command fails
+/// fast when the service socket isn't up. Returns `Ok(true)` only
+/// when we're confident the service is responsive.
+pub async fn is_service_running(container_bin: &Path) -> bool {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let fut = Command::new(container_bin)
+        .arg("ls")
+        .arg("-q")
+        .output();
+    match tokio::time::timeout(Duration::from_secs(5), fut).await {
+        Ok(Ok(out)) => out.status.success(),
+        _ => false,
+    }
+}
+
+/// Stop the Apple Container system service (best-effort). Used on
+/// app quit when we started the service ourselves.
+pub async fn stop_service(container_bin: &Path) -> Result<(), String> {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let fut = Command::new(container_bin)
+        .arg("system")
+        .arg("stop")
+        .output();
+    let out = tokio::time::timeout(Duration::from_secs(30), fut)
+        .await
+        .map_err(|_| "`container system stop` timed out".to_string())?
+        .map_err(|e| format!("spawn `container system stop`: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "`container system stop` failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// List names of currently running containers (best-effort). Returns
+/// an empty vec if the service is down or the command fails.
+pub async fn list_running_container_names(container_bin: &Path) -> Vec<String> {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let fut = Command::new(container_bin)
+        .arg("ls")
+        .arg("--format")
+        .arg("json")
+        .output();
+    let out = match tokio::time::timeout(Duration::from_secs(5), fut).await {
+        Ok(Ok(o)) if o.status.success() => o,
+        _ => return Vec::new(),
+    };
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Apple Container emits a JSON array of objects; be permissive
+    // about the exact schema and look for a `name`-ish key.
+    let v: serde_json::Value = match serde_json::from_str(stdout.trim()) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    let arr = match v.as_array() {
+        Some(a) => a,
+        None => return Vec::new(),
+    };
+    arr.iter()
+        .filter_map(|obj| {
+            obj.get("name")
+                .or_else(|| obj.get("Name"))
+                .or_else(|| obj.get("configuration").and_then(|c| c.get("id")))
+                .or_else(|| obj.get("id"))
+                .or_else(|| obj.get("ID"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
+        .collect()
+}
+
+/// Stop a specific container by name. Returns Ok even if the
+/// container is already gone.
+pub async fn stop_container(container_bin: &Path, name: &str) -> Result<(), String> {
+    use std::time::Duration;
+    use tokio::process::Command;
+
+    let fut = Command::new(container_bin)
+        .arg("stop")
+        .arg(name)
+        .output();
+    let out = tokio::time::timeout(Duration::from_secs(30), fut)
+        .await
+        .map_err(|_| format!("`container stop {name}` timed out"))?
+        .map_err(|e| format!("spawn `container stop`: {e}"))?;
+    // Treat "no such container" as success.
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).to_string();
+        if err.to_lowercase().contains("not found") || err.to_lowercase().contains("no such") {
+            return Ok(());
+        }
+        return Err(format!("`container stop {name}` failed: {err}"));
+    }
+    Ok(())
+}
+
 fn split_path_env(path_env: &str) -> Vec<PathBuf> {
     // Mirrors std::env::split_paths without requiring an OsString
     // round-trip; Unix-only because the rest of the tool stack is

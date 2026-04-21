@@ -143,6 +143,17 @@ fn is_url_allowed_for_site_window(app: &AppHandle, url: &tauri::Url) -> bool {
         return true;
     }
 
+    // Loopback preview: `wiki_open_local_site` publishes the wiki's
+    // serve container on 127.0.0.1:<port in 8000-8099>. Anything
+    // outside that port range must come through the wiki allowlist.
+    if url.scheme() == "http" && (host == "127.0.0.1" || host == "localhost") {
+        if let Some(p) = url.port() {
+            if (8000..=8099).contains(&p) {
+                return true;
+            }
+        }
+    }
+
     if let Ok(dev) = std::env::var(config::DEV_URL_ENV) {
         if let Ok(dev_parsed) = dev.parse::<tauri::Url>() {
             if url.host() == dev_parsed.host()
