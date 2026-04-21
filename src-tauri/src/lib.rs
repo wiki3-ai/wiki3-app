@@ -6,6 +6,7 @@ pub mod menu;
 pub mod permissions;
 pub mod providers;
 pub mod publishing_commands;
+pub mod tools;
 pub mod wiki;
 pub mod window_state;
 pub mod workspace;
