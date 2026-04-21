@@ -23,6 +23,7 @@
 //! mismatch — this is the supply-chain boundary. Bumping a pinned
 //! version is a code-review-gated change.
 
+pub mod devcontainer_config;
 pub mod installer;
 pub mod registry;
 pub mod uninstall;
@@ -68,6 +69,9 @@ pub enum ToolsError {
 
     #[error("archive extraction failed: {0}")]
     Extract(String),
+
+    #[error("javascript error in devcontainer config processing: {0}")]
+    Script(String),
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
