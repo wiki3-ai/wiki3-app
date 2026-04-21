@@ -174,12 +174,11 @@ pub async fn wiki_commit_and_maybe_publish(
 /// Build a wiki's static site.
 ///
 /// If the repo has a `.devcontainer/` directory, the build runs
-/// inside a Wiki3-managed sandbox: the pinned Deno is ensured,
-/// `@devcontainers/cli` is invoked under it (`devcontainer up` then
-/// `devcontainer exec jupyter lite build`), with `DOCKER_HOST`
-/// pointed at Apple Container's user socket. The user never installs
-/// Node, npm, Homebrew, or the devcontainer CLI themselves — Wiki3
-/// manages those under `<app_data>/tools/`.
+/// inside Apple Container: we parse `devcontainer.json` in-process
+/// (via an embedded QuickJS module — see
+/// `tools::devcontainer_config`), build the image if needed, and
+/// invoke `container run` with the workspace bind-mounted. No
+/// `docker` CLI, no Node/Deno, no third-party devcontainer CLI.
 ///
 /// If the repo has no `.devcontainer/`, the legacy path runs
 /// `jupyter lite build` directly on the host, for backward
@@ -202,7 +201,7 @@ pub async fn wiki_build_site(
     if path_ref.join(".devcontainer").exists()
         || path_ref.join(".devcontainer.json").exists()
     {
-        return build_site_in_devcontainer(&app, &path).await;
+        return build_site_in_devcontainer(&path).await;
     }
 
     let output = Command::new("jupyter")
@@ -237,29 +236,29 @@ pub async fn wiki_build_site(
     }))
 }
 
-/// Build via `deno run … npm:@devcontainers/cli …`.
+/// Build the site inside Apple Container.
 ///
-/// Deno ships inside the Wiki3 app bundle (see `build.rs` and
-/// `tools::runner::require_bundled_deno`) — no install step is
-/// involved. Apple Container is the only runtime prerequisite.
-///
-/// 1. Verify Apple Container is installed (otherwise return a
-///    structured error so the UI can launch the signed `.pkg`).
-/// 2. Run `devcontainer up` to bring the sandbox up.
-/// 3. Run `devcontainer exec jupyter lite build` inside it.
+/// 1. Verify Apple Container is installed.
+/// 2. Ensure `container system start` has been run (idempotent).
+/// 3. Parse `.devcontainer/devcontainer.json` in-process via QuickJS.
+/// 4. If the config specifies a `build` (Dockerfile), run
+///    `container build` to produce a tagged image.
+/// 5. Run `container run` with the workspace bind-mounted and execute
+///    the `postCreateCommand` (or `jupyter lite build` as fallback).
 async fn build_site_in_devcontainer(
-    app: &AppHandle,
     workspace: &str,
 ) -> Result<serde_json::Value, String> {
-    use crate::tools::{apple_container, runner, ToolsState};
+    use crate::tools::{apple_container, devcontainer_config};
 
-    // Gate: Apple Container is required. The UI will turn this into
-    // the "macOS will now ask to install Apple Container" modal.
+    let workspace_path = std::path::Path::new(workspace);
+
+    // --- 1. Apple Container must be installed ---
     let ac = apple_container::detect();
     if !ac.installed {
         return Err(
-            "Apple Container is not installed. Open the Tools dialog to run the \
-             detection probe and install it before building in a sandbox."
+            "Apple Container is not installed. Install it from the signed \
+             installer at https://github.com/apple/container/releases before \
+             building in a sandbox."
                 .to_string(),
         );
     }
@@ -267,65 +266,173 @@ async fn build_site_in_devcontainer(
         "Apple Container detection succeeded but returned no path".to_string()
     })?;
 
-    // Ensure the service (and its UNIX socket) is up. Idempotent —
-    // `container system start` is a no-op if already running. On a
-    // fresh reboot this is what wakes the socket `devcontainer up`
-    // talks to via `DOCKER_HOST`.
+    // --- 2. Ensure the service (and its socket) are up ---
     apple_container::ensure_service_running(&container_bin)
         .await
         .map_err(|e| format!("Could not start Apple Container service: {e}"))?;
 
-    let state = app.state::<ToolsState>();
-    let docker_host = runner::apple_container_docker_host();
+    // --- 3. Discover + parse devcontainer.json ---
+    let configs = devcontainer_config::find_devcontainer_configs(workspace_path);
+    let cfg_path = configs
+        .first()
+        .ok_or_else(|| {
+            "No devcontainer.json found under .devcontainer/ — cannot \
+             build in a sandbox."
+                .to_string()
+        })?
+        .clone();
+    let cfg = devcontainer_config::load_config(&cfg_path)
+        .map_err(|e| format!("Failed to parse {}: {e}", cfg_path.display()))?;
 
-    // devcontainer up
-    let up = runner::run_devcontainer(
-        &state,
-        "up",
-        &["--workspace-folder", workspace],
-        std::path::Path::new(workspace),
-        docker_host.as_deref(),
-    )
-    .await?;
-    if !up.success {
+    // The directory containing devcontainer.json — build paths in the
+    // config are relative to this.
+    let cfg_dir = cfg_path
+        .parent()
+        .unwrap_or(workspace_path)
+        .to_path_buf();
+
+    // --- 4. Resolve image: either explicit `image` or build a Dockerfile ---
+    let workspace_name = workspace_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("wiki");
+    let image_ref = if let Some(img) = cfg.image.as_deref() {
+        img.to_string()
+    } else if let Some(build) = cfg.build.as_ref() {
+        let dockerfile = build.dockerfile.as_deref().unwrap_or("Dockerfile");
+        let context_rel = build.context.as_deref().unwrap_or(".");
+        let context_abs = cfg_dir.join(context_rel);
+        let dockerfile_abs = cfg_dir.join(dockerfile);
+        let tag = format!("wiki3-build-{}:latest", sanitize_tag(workspace_name));
+
+        let build_out = tokio::process::Command::new(&container_bin)
+            .arg("build")
+            .arg("--tag")
+            .arg(&tag)
+            .arg("--file")
+            .arg(&dockerfile_abs)
+            .arg(&context_abs)
+            .output()
+            .await
+            .map_err(|e| format!("failed to spawn `container build`: {e}"))?;
+
+        if !build_out.status.success() {
+            return Err(format!(
+                "container build failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
+                build_out.status.code(),
+                String::from_utf8_lossy(&build_out.stderr),
+                String::from_utf8_lossy(&build_out.stdout),
+            ));
+        }
+        tag
+    } else {
         return Err(format!(
-            "devcontainer up failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
-            up.status, up.stderr, up.stdout,
+            "devcontainer.json at {} has neither `image` nor `build` — \
+             cannot produce a runtime image.",
+            cfg_path.display()
         ));
+    };
+
+    // --- 5. Build the shell command to run inside the container ---
+    //
+    // Prefer the devcontainer's `postCreateCommand` since that's what
+    // the wiki3 templates use to drive the build. Fall back to a
+    // plain `jupyter lite build` otherwise.
+    let cmd_str = cfg
+        .post_create_command
+        .as_ref()
+        .and_then(|v| value_to_shell_command(v))
+        .unwrap_or_else(|| "jupyter lite build".to_string());
+
+    let mount_arg = format!("{}:/workspaces/{workspace_name}", workspace);
+    let workdir = format!("/workspaces/{workspace_name}");
+
+    let mut run_cmd = tokio::process::Command::new(&container_bin);
+    run_cmd
+        .arg("run")
+        .arg("--rm")
+        .arg("--volume")
+        .arg(&mount_arg)
+        .arg("--workdir")
+        .arg(&workdir);
+
+    if let Some(user) = cfg.remote_user.as_deref() {
+        run_cmd.arg("--user").arg(user);
     }
 
-    // devcontainer exec jupyter lite build
-    let exec = runner::run_devcontainer(
-        &state,
-        "exec",
-        &[
-            "--workspace-folder",
-            workspace,
-            "jupyter",
-            "lite",
-            "build",
-        ],
-        std::path::Path::new(workspace),
-        docker_host.as_deref(),
-    )
-    .await?;
+    run_cmd
+        .arg(&image_ref)
+        .arg("bash")
+        .arg("-lc")
+        .arg(&cmd_str);
 
-    if !exec.success {
+    let exec = run_cmd
+        .output()
+        .await
+        .map_err(|e| format!("failed to spawn `container run`: {e}"))?;
+
+    let stdout = String::from_utf8_lossy(&exec.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&exec.stderr).to_string();
+
+    if !exec.status.success() {
         return Err(format!(
-            "jupyter lite build (in devcontainer) failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
-            exec.status, exec.stderr, exec.stdout,
+            "container run failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
+            exec.status.code(),
+            stderr,
+            stdout,
         ));
     }
 
     Ok(serde_json::json!({
         "success": true,
-        "mode": "devcontainer",
-        "deno_path": exec.deno_path.to_string_lossy(),
+        "mode": "apple-container",
         "apple_container_path": ac.path.map(|p| p.to_string_lossy().to_string()),
-        "output_dir": std::path::Path::new(workspace).join("_output").to_string_lossy(),
-        "stdout": exec.stdout,
-        "stderr": exec.stderr,
+        "image": image_ref,
+        "command": cmd_str,
+        "output_dir": workspace_path.join("_output").to_string_lossy(),
+        "stdout": stdout,
+        "stderr": stderr,
     }))
+}
+
+/// Convert a `postCreateCommand` JSON value into a single shell
+/// command string. The devcontainer spec allows string, array, or
+/// object forms; we support the two common ones.
+fn value_to_shell_command(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Array(items) => {
+            let parts: Vec<String> = items
+                .iter()
+                .filter_map(|i| i.as_str().map(|s| shell_quote(s)))
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join(" "))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Minimal POSIX shell quoter — wraps in single quotes, escaping any
+/// embedded single quotes.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Sanitize a string for use as an OCI image tag fragment.
+fn sanitize_tag(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 /// `PublishingState` holds `data_dir` privately; expose a helper that

@@ -28,6 +28,7 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 tempfile = "3"
+rquickjs = "0.11.0"
 
 [dev-dependencies]
 tempfile = "3"
