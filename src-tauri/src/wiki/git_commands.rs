@@ -273,7 +273,7 @@ async fn build_site_in_devcontainer(
         use tauri::Emitter;
         let _ = emit.emit(
             "wiki3://tools/install-progress",
-            serde_json::json!({ "phase": format!("{p:?}") }),
+            crate::tools::commands::serialize_progress_payload(&p),
         );
     };
 

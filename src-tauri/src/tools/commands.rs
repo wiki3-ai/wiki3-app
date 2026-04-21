@@ -131,6 +131,14 @@ pub async fn tools_ensure(
 }
 
 fn serialize_progress(p: &InstallProgress) -> serde_json::Value {
+    serialize_progress_payload(p)
+}
+
+/// Same payload shape as the `wiki3://tools/install-progress` event
+/// emitted by [`tools_ensure`]. Exposed so other commands that drive
+/// `installer::ensure` (e.g. the build-site flow when it has to
+/// install Deno on the fly) emit identical JSON to the frontend.
+pub fn serialize_progress_payload(p: &InstallProgress) -> serde_json::Value {
     match p {
         InstallProgress::Starting { name, version } => serde_json::json!({
             "phase": "starting", "name": name, "version": version,

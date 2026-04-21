@@ -401,7 +401,7 @@ mod tests {
         let err = ensure(tmp.path(), &m, "test-arch", |_| {})
             .await
             .expect_err("should reject");
-        matches!(err, ToolsError::HashMismatch { .. });
+        assert!(matches!(err, ToolsError::HashMismatch { .. }));
 
         // Install directory must not exist.
         let install_dir = tmp.path().join("deno").join("9.9.9");
@@ -419,7 +419,7 @@ mod tests {
         let err = ensure(tmp.path(), &m, "no-such-arch", |_| {})
             .await
             .expect_err("should reject arch");
-        matches!(err, ToolsError::UnsupportedArch { .. });
+        assert!(matches!(err, ToolsError::UnsupportedArch { .. }));
     }
 
     #[test]
