@@ -48,6 +48,13 @@ pub struct DevcontainerConfig {
     #[serde(rename = "postCreateCommand", skip_serializing_if = "Option::is_none")]
     pub post_create_command: Option<serde_json::Value>,
 
+    /// Command to run each time the container is started. In the
+    /// devcontainer spec this is the long-running foreground
+    /// process (e.g. a dev server) — for wiki3 sites that's
+    /// typically `jupyter lite serve`.
+    #[serde(rename = "postStartCommand", skip_serializing_if = "Option::is_none")]
+    pub post_start_command: Option<serde_json::Value>,
+
     /// User to run as inside the container.
     #[serde(rename = "remoteUser", skip_serializing_if = "Option::is_none")]
     pub remote_user: Option<String>,

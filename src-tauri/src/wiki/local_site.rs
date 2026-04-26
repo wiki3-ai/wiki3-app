@@ -31,6 +31,34 @@ const SERVE_READY_TIMEOUT: Duration = Duration::from_secs(60);
 /// most devcontainers won't need to override it.
 const CONTAINER_SERVE_PORT: u16 = 8000;
 
+/// Read the container-side serve port from a devcontainer's
+/// `forwardPorts` (first numeric entry). The devcontainer spec
+/// allows entries to be either bare numbers (`8000`) or strings
+/// like `"host:8000"`/`"8000:8000"`/`"8000"`; in the latter case
+/// the *container* port is the right-hand side.
+fn container_port_from_forward_ports(
+    forward_ports: &[serde_json::Value],
+    default_port: u16,
+) -> u16 {
+    for v in forward_ports {
+        if let Some(n) = v.as_u64() {
+            if (1..=u16::MAX as u64).contains(&n) {
+                return n as u16;
+            }
+        }
+        if let Some(s) = v.as_str() {
+            // "host:cport" → cport; bare "cport" → cport.
+            let tail = s.rsplit(':').next().unwrap_or(s);
+            if let Ok(n) = tail.trim().parse::<u16>() {
+                if n != 0 {
+                    return n;
+                }
+            }
+        }
+    }
+    default_port
+}
+
 /// Information about a single running preview.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RunningSite {
@@ -146,9 +174,10 @@ fn pick_free_port() -> Result<u16, String> {
     ))
 }
 
-/// Read `customizations.wiki3.{serveCommand,watchCommand}` from a
-/// parsed devcontainer config. Missing or non-string values yield
-/// `None`, in which case callers use a default command.
+/// Read `customizations.wiki3.serveCommand` from a parsed
+/// devcontainer config. Missing or non-string values yield `None`,
+/// in which case callers fall back to the standard
+/// `postStartCommand` or a built-in default.
 fn extract_wiki3_command(
     customizations: Option<&serde_json::Value>,
     key: &str,
@@ -160,33 +189,17 @@ fn extract_wiki3_command(
         .map(|s| s.to_string())
 }
 
-/// Compose the default serve command. Writes to stdout/stderr inside
-/// the container; `--ip 0.0.0.0` so the `--publish` mapping reaches
-/// it. Assumes `jupyter` is on PATH in the image (true for the
-/// default wiki3 template).
+/// Compose the default serve command, used when neither
+/// `customizations.wiki3.serveCommand` nor the devcontainer's
+/// `postStartCommand` is set. `jupyter lite serve` builds the site
+/// on its own at start, so there is no separate up-front build —
+/// the watch loop only handles *subsequent* content changes.
+///
+/// `--ip 0.0.0.0` so the `--publish` mapping reaches the process.
+/// Assumes `jupyter` is on PATH in the image (true for the default
+/// wiki3 template).
 fn default_serve_command(port: u16) -> String {
     format!("jupyter lite serve --port {port} --ip 0.0.0.0")
-}
-
-/// The one-shot build that produces `_output/` before serve starts.
-fn default_build_command() -> String {
-    "jupyter lite build".to_string()
-}
-
-/// Compose the default watch *loop* (no initial build — that runs in
-/// the foreground before serve starts, so `_output/` is populated
-/// when clients first connect). The `-mmin`-free polling keeps us
-/// off `inotify-tools`/`watchexec`.
-fn default_watch_command() -> String {
-    "while true; do \
-       if find content files 2>/dev/null | xargs -I{} stat -c %Y {} 2>/dev/null | sort -nr | head -1 > /tmp/.w3-now; \
-          ! cmp -s /tmp/.w3-now /tmp/.w3-last 2>/dev/null; then \
-         cp /tmp/.w3-now /tmp/.w3-last; \
-         jupyter lite build; \
-       fi; \
-       sleep 2; \
-     done"
-        .to_string()
 }
 
 /// Poll `127.0.0.1:<port>` until a TCP connect succeeds or we time
@@ -343,26 +356,43 @@ pub async fn start_site(
         format!("Using image: {}", resolved.image_ref),
     );
 
-    // 4. Pick a free host port and compose the single combined
-    // command: setup → initial build → watch loop (background) →
-    // serve (foreground). Running everything in one container means
-    // one `pip install`, one bind-mount, one log stream, and no
-    // virtio-fs cross-container visibility questions.
+    // 4. Pick a free host port and compose the startup script.
+    //
+    // We follow devcontainer semantics: `postCreateCommand` runs
+    // once after create (we re-run it every start because we use
+    // `--rm` containers), then `postStartCommand` is the
+    // long-running foreground process. There is intentionally no
+    // separate up-front build — `jupyter lite serve` builds on
+    // start, so building first would do the work twice.
+    //
+    // Running everything in one container means one `pip install`,
+    // one bind-mount, one log stream, and no virtio-fs
+    // cross-container visibility questions.
     let host_port = pick_free_port()?;
-    let cport = CONTAINER_SERVE_PORT;
+    let cport = container_port_from_forward_ports(
+        &resolved.config.forward_ports,
+        CONTAINER_SERVE_PORT,
+    );
+    // The foreground (serve) command, in priority order:
+    //   1. `customizations.wiki3.serveCommand` — wiki3-specific
+    //      override that knows about port/ip.
+    //   2. `postStartCommand` — standard devcontainer hook.
+    //   3. Built-in default that listens on 0.0.0.0:<cport>.
     let serve_cmd = extract_wiki3_command(resolved.config.customizations.as_ref(), "serveCommand")
+        .or_else(|| {
+            resolved
+                .config
+                .post_start_command
+                .as_ref()
+                .and_then(crate::wiki::git_commands::value_to_shell_command)
+        })
         .unwrap_or_else(|| default_serve_command(cport));
-    let watch_cmd = extract_wiki3_command(resolved.config.customizations.as_ref(), "watchCommand")
-        .unwrap_or_else(default_watch_command);
-    let build_cmd = extract_wiki3_command(resolved.config.customizations.as_ref(), "buildCommand")
-        .unwrap_or_else(default_build_command);
 
-    // The serve/watch container runs `--rm`, so any
-    // `postCreateCommand` side-effects (e.g. `pip install
-    // jupyterlite-core`) don't persist. Re-run it up-front so
-    // `jupyter` & co. are on PATH. Opt out by setting
-    // `customizations.wiki3.runPostCreate = false` (useful if you
-    // move the install into the Dockerfile).
+    // The serve container runs `--rm`, so any `postCreateCommand`
+    // side-effects (e.g. `pip install jupyterlite-core`) don't
+    // persist. Re-run it up-front so `jupyter` & co. are on PATH.
+    // Opt out by setting `customizations.wiki3.runPostCreate =
+    // false` (useful if you move the install into the Dockerfile).
     let run_post_create = resolved
         .config
         .customizations
@@ -389,17 +419,6 @@ pub async fn start_site(
             script.push_str(pc);
             script.push('\n');
         }
-    }
-    if !build_cmd.trim().is_empty() {
-        script.push_str(&build_cmd);
-        script.push('\n');
-    }
-    if !watch_cmd.trim().is_empty() {
-        // Background the watch loop so serve can run in the
-        // foreground and define the container's lifetime.
-        script.push('(');
-        script.push_str(&watch_cmd);
-        script.push_str(") &\n");
     }
     // `exec` so the serve process becomes PID 1 of the container:
     // signals forwarded cleanly, no extra bash wrapper in `ps`.
@@ -710,6 +729,35 @@ mod tests {
     #[test]
     fn default_serve_command_includes_port() {
         assert!(default_serve_command(8042).contains("--port 8042"));
+    }
+
+    #[test]
+    fn container_port_prefers_first_forward_port_number() {
+        let v = vec![serde_json::json!(8888), serde_json::json!(9000)];
+        assert_eq!(container_port_from_forward_ports(&v, 8000), 8888);
+    }
+
+    #[test]
+    fn container_port_parses_host_colon_container_string() {
+        let v = vec![serde_json::json!("3000:8888")];
+        assert_eq!(container_port_from_forward_ports(&v, 8000), 8888);
+    }
+
+    #[test]
+    fn container_port_parses_bare_string() {
+        let v = vec![serde_json::json!("8888")];
+        assert_eq!(container_port_from_forward_ports(&v, 8000), 8888);
+    }
+
+    #[test]
+    fn container_port_falls_back_to_default_when_empty() {
+        assert_eq!(container_port_from_forward_ports(&[], 8000), 8000);
+    }
+
+    #[test]
+    fn container_port_falls_back_when_unparseable() {
+        let v = vec![serde_json::json!("notaport"), serde_json::json!(0)];
+        assert_eq!(container_port_from_forward_ports(&v, 8000), 8000);
     }
 
     #[test]
