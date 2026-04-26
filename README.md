@@ -268,4 +268,14 @@ npm test
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+Copyright (c) 2026 by James P. White (jim@wiki3.ai).
+
+This software, Wiki3 App, is licensed under the GNU Affero General Public License,
+version 3 or later (`AGPL-3.0-or-later` - https://spdx.org/licenses/AGPL-3.0-or-later.html).  While GPLv3 is sufficient user freedom for `gcc`, `emacs`, 
+and a lot of other Free Software (https://www.gnu.org/philosophy/free-sw.en.html), in the AI cloud era 
+we belive it is also necessary to make clear that if you provide this software as a service to other
+users then you need to respect their freedom rights too and provide access to this application and 
+whatever modifications you've made to it.
+
+See [LICENSE](LICENSE) for the full text.
+
