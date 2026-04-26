@@ -461,6 +461,44 @@ function showDialog(innerHtml: string): HTMLElement {
   return overlay;
 }
 
+/**
+ * Full-screen modal shown while the backend tears down preview
+ * containers on app quit. Blocks all interaction (no dismiss-on-click)
+ * and stays up until the process exits.
+ */
+function showShutdownOverlay(): void {
+  if (document.getElementById('w3-shutdown-overlay')) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'w3-shutdown-overlay';
+  overlay.style.cssText = [
+    'position:fixed',
+    'inset:0',
+    'background:rgba(20,20,28,0.85)',
+    'color:#fff',
+    'z-index:99999',
+    'display:flex',
+    'flex-direction:column',
+    'align-items:center',
+    'justify-content:center',
+    'gap:16px',
+    'font-family:-apple-system,BlinkMacSystemFont,sans-serif',
+    'cursor:wait',
+  ].join(';');
+  overlay.innerHTML = `
+    <div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.2);border-top-color:#fff;border-radius:50%;animation:w3-spin 1s linear infinite;"></div>
+    <div style="font-size:16px;font-weight:600;">Shutting down…</div>
+    <div style="font-size:13px;opacity:0.85;max-width:360px;text-align:center;line-height:1.4;">
+      Stopping preview containers and Apple Container service.
+      This usually takes a few seconds.
+    </div>
+    <style>@keyframes w3-spin { to { transform: rotate(360deg); } }</style>
+  `;
+  // Capture-phase listeners on the overlay swallow any stray clicks.
+  overlay.addEventListener('click', (e) => e.stopPropagation(), true);
+  overlay.addEventListener('keydown', (e) => e.stopPropagation(), true);
+  document.body.appendChild(overlay);
+}
+
 async function openAddWikiDialog(prefill?: Partial<{ remote: string; local: string; site: string }>): Promise<void> {
   const dlg = showDialog(`
     <h3>Add Wiki</h3>
@@ -1104,6 +1142,18 @@ async function init(): Promise<void> {
   } catch (e) {
     // Event plugin unavailable in pure web preview — safe to ignore.
     console.warn('Menu event listener not attached:', e);
+  }
+
+  // Shutdown overlay: the backend emits this after it intercepts the
+  // exit and starts tearing down preview containers, which can take
+  // several seconds. Block all UI so the user knows the app hasn't
+  // hung. The window will close on its own once cleanup finishes.
+  try {
+    await listen<unknown>('wiki3://shutdown-begin', () => {
+      showShutdownOverlay();
+    });
+  } catch (e) {
+    console.warn('Shutdown event listener not attached:', e);
   }
 
   await refresh();

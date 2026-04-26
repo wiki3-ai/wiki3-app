@@ -20,6 +20,7 @@ pub const ID_SHOW_DASHBOARD: &str = "wiki3.show_dashboard";
 pub const ID_CLOSE_ALL_WIKI_WINDOWS: &str = "wiki3.close_all_wiki_windows";
 pub const ID_REOPEN_ALL_WIKI_WINDOWS: &str = "wiki3.reopen_all_wiki_windows";
 pub const ID_HELP_README: &str = "wiki3.help_readme";
+pub const ID_QUIT: &str = "wiki3.quit";
 
 /// Build the application menu.
 pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -27,6 +28,18 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let app_name = "Wiki3";
 
     // macOS application submenu.
+    //
+    // Note: we deliberately use a custom Quit MenuItem instead of
+    // `PredefinedMenuItem::quit`. The predefined one routes through
+    // NSApplication.terminate(_:), which bypasses Tauri's
+    // `RunEvent::ExitRequested` handler — meaning `api.prevent_exit()`
+    // can't hold the process open while we tear down preview
+    // containers. Going through `app.exit(0)` instead fires the
+    // event normally, so our shutdown hook in lib.rs runs.
+    #[cfg(target_os = "macos")]
+    let quit_item = MenuItemBuilder::with_id(ID_QUIT, format!("Quit {app_name}"))
+        .accelerator("CmdOrCtrl+Q")
+        .build(app)?;
     #[cfg(target_os = "macos")]
     let app_submenu = SubmenuBuilder::new(app, app_name)
         .about(Some(AboutMetadata {
@@ -41,7 +54,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .hide_others()
         .show_all()
         .separator()
-        .quit()
+        .item(&quit_item)
         .build()?;
 
     // File menu
@@ -145,6 +158,12 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         }
         ID_HELP_README => {
             let _ = open_external_url_generic("https://github.com/wiki3-ai/wiki3-app");
+        }
+        ID_QUIT => {
+            // Goes through `RunEvent::ExitRequested`, so the
+            // shutdown hook in lib.rs runs and we can stop preview
+            // containers before the process actually exits.
+            app.exit(0);
         }
         ID_NEW_FROM_TEMPLATE
         | ID_CLONE_WIKI

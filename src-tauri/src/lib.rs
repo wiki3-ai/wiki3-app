@@ -11,7 +11,7 @@ pub mod wiki;
 pub mod window_state;
 pub mod workspace;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::host::DesktopHostState;
 use crate::publishing_commands::PublishingState;
@@ -328,6 +328,18 @@ pub fn run() {
                 }
 
                 api.prevent_exit();
+
+                // Tell the dashboard to show a full-screen "Shutting
+                // down…" overlay so the user has feedback while we
+                // stop containers (which can take several seconds).
+                if let Some(dash) = app_handle
+                    .get_webview_window(crate::commands::DASHBOARD_LABEL)
+                {
+                    let _ = dash.unminimize();
+                    let _ = dash.show();
+                    let _ = dash.set_focus();
+                    let _ = dash.emit("wiki3://shutdown-begin", ());
+                }
 
                 let handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
