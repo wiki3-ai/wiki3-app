@@ -83,8 +83,11 @@ TypeScript modules for desktop integration and publishing UI:
 ## Features
 
 - **Dashboard**: List of wiki cards, each with links (local / remote / site), action buttons, and window tracking. New wikis appear at the top and can be dragged to reorder.
-- **Per-wiki Git & Publish**: Local repos expose Commit, Push, Pull, Publish, and Build Site buttons. The commit dialog has an "Also publish" option, and each wiki has a persistent **Publish on Commit** checkbox so one click can do commit → push → site-build.
-- **Build Site**: Runs `jupyter lite build` in the wiki's local directory to generate the static `_output/`.
+- **Per-wiki Git & Push**: Local repos expose Commit, Push, Pull, Publish, Build, Serve, and Site buttons. The commit dialog has an "Also publish" option, and each wiki has a persistent **Publish on Commit** checkbox so one click can do commit + push.
+- **Build**: Runs `jupyter lite build` inside Apple Container (or on the host as a fallback) to produce the static `_output/`.
+- **Serve / Stop**: Starts (or stops) a per-wiki preview container that runs `jupyter lite serve` and a watch loop. The build is included in the serve startup, so you don't need to click Build first — but Build is handy when you just want to refresh the static output without serving it.
+- **Site**: When the preview container is running, opens the loopback URL (`http://<host>:<port>/`) in your default OS browser. Hostname is read from `/etc/hosts` (preferring `::1`, falling back to `127.0.0.1`, falling back to `localhost`).
+- **Autostart Container**: Per-wiki checkbox. When set, the preview container starts automatically on app launch.
 - **Add Wiki / Clone / Open Local**: File-dialog driven flows defaulting to `~/Wiki3`. Wikis are loose records — any combination of local path / remote / site URL is valid.
 - **Seeded Defaults**: First launch seeds `wiki3-ai/wiki3-ai-site` and `wiki3-ai/wiki3-ai-template`. Removing a default does not re-seed it.
 - **Window Tracking**: Site windows opened from a wiki card are tagged to that wiki, shown in an expandable list, and can be Close All / Reopen All together. Geometry is preserved across close/reopen.
@@ -114,19 +117,21 @@ Each wiki card on the dashboard exposes a set of buttons driven by which of the 
 
 ### Publish (local + remote)
 
-- **Publish** pushes the current branch to `origin`, then best-effort enables GitHub Pages on the remote. The remote site build runs asynchronously on GitHub's side.
-- **Pull** runs `git pull origin <branch>` to refresh the local copy once the remote build has finished.
+- **Publish** pushes the current branch to `origin`. Site rebuilds happen via whatever CI you have configured on the remote (if any) — GitHub Pages enabling is intentionally not part of this flow for now; users can wire that up themselves per-repo.
+- **Pull** runs `git pull origin <branch>` to refresh the local copy.
 
 ### Publish on Commit
 
 - Each wiki card with both a local path and a remote has a **Publish on Commit** checkbox under the action row.
-- When checked, the commit dialog pre-checks "Also publish" so a single click does commit → push → Pages-enable in one round-trip.
+- When checked, the commit dialog pre-checks "Also publish" so a single click does commit + push.
 - The flag is persisted on the wiki record (`publish_on_commit: bool`) via `set_wiki_publish_on_commit`.
 
-### Build Site
+### Build / Serve / Site
 
-- **Build Site** runs `jupyter lite build` in the wiki's local directory. The resulting static site is written to `_output/` (JupyterLite convention) and can be committed/published as usual.
-- Requires `jupyter` and `jupyterlite-core` to be installed and on PATH; the app surfaces build output in the dialog.
+- **Build** runs `jupyter lite build` (inside Apple Container if the repo has a `.devcontainer/`, otherwise on the host).
+- **Serve** starts a per-wiki preview container that runs `jupyter lite serve` (with the build included on startup) and a polling watch loop that rebuilds when content changes. **Stop** tears the container down.
+- **Site** appears once the preview container is accepting connections and opens the loopback URL in your default OS browser. Because it opens externally, the build-still-running case shows up as a browser-level connection error rather than a blank in-app window.
+- **Autostart Container** is a per-wiki checkbox that re-starts the preview container on app launch.
 
 ### Planned follow-ups (not in this release)
 

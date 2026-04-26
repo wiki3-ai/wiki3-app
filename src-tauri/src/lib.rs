@@ -100,6 +100,41 @@ pub fn run() {
             app.manage(tools_state);
             app.manage(crate::wiki::local_site::LocalSiteManager::new());
 
+            // Autostart per-wiki preview containers for any wikis with
+            // `autostart_container = true` and a still-existing local
+            // path. Spawn each on the Tokio runtime so app launch is
+            // not blocked by container/image setup.
+            {
+                let wiki_state = app.state::<WikiState>();
+                if let Ok(wikis) = wiki_state.manager.list() {
+                    for w in wikis
+                        .into_iter()
+                        .filter(|w| w.autostart_container)
+                    {
+                        let Some(path) = w
+                            .local_path
+                            .as_ref()
+                            .map(std::path::PathBuf::from)
+                            .filter(|p| p.exists())
+                        else {
+                            continue;
+                        };
+                        let handle = app.handle().clone();
+                        let id = w.id.clone();
+                        tauri::async_runtime::spawn(async move {
+                            let mgr = handle.state::<crate::wiki::local_site::LocalSiteManager>();
+                            if let Err(e) = crate::wiki::local_site::start_site(
+                                &handle, mgr.inner(), &id, &path,
+                            )
+                            .await
+                            {
+                                log::warn!("autostart container for wiki {id} failed: {e}");
+                            }
+                        });
+                    }
+                }
+            }
+
             // Install the native menu.
             match crate::menu::build_menu(app.handle()) {
                 Ok(menu) => {
@@ -249,6 +284,7 @@ pub fn run() {
             wiki::commands::remove_wiki,
             wiki::commands::reorder_wikis,
             wiki::commands::set_wiki_publish_on_commit,
+            wiki::commands::set_wiki_autostart_container,
             wiki::commands::restore_default_wikis,
             wiki::commands::get_default_wikis_dir,
             wiki::commands::is_empty_dir,
@@ -266,9 +302,9 @@ pub fn run() {
             wiki::git_commands::wiki_commit_and_maybe_publish,
             wiki::git_commands::wiki_build_site,
             // Local site preview (serve + watch inside Apple Container)
-            wiki::local_site::wiki_open_local_site,
-            wiki::local_site::wiki_close_local_site,
-            wiki::local_site::wiki_local_site_status,
+            wiki::local_site::wiki_start_container,
+            wiki::local_site::wiki_stop_container,
+            wiki::local_site::wiki_container_status,
             wiki::local_site::wiki_force_stop_container_service,
             // Managed tools: Apple Container is the only external
             // dependency, and we only detect it (never install it).

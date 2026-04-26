@@ -21,6 +21,8 @@ let wikis: Wiki[] = [];
 let trackedWindows: TrackedWindowInfo[] = [];
 // Wiki ids whose window-list section is currently expanded.
 const expanded = new Set<string>();
+// Per-wiki preview-container status. Null/missing = not running.
+const containerStatuses = new Map<string, wikiApi.RunningSite | null>();
 
 const content = () => document.getElementById('main-content');
 
@@ -286,19 +288,32 @@ function renderCard(w: Wiki): string {
     ? `<button class="w3-btn w3-btn-sm" data-action="publish-wiki" data-id="${escapeHtml(w.id)}" title="Push and publish the site">Publish</button>`
     : '';
   const buildBtn = hasLocal
-    ? `<button class="w3-btn w3-btn-sm" data-action="build-site" data-id="${escapeHtml(w.id)}" title="Run &#x60;jupyter lite build&#x60; in the local repo">Build Site</button>`
+    ? `<button class="w3-btn w3-btn-sm" data-action="build-site" data-id="${escapeHtml(w.id)}" title="Run &#x60;jupyter lite build&#x60; in the local repo">Build</button>`
     : '';
-  const openLocalSiteBtn = hasLocal
-    ? `<button class="w3-btn w3-btn-sm" data-action="open-local-site" data-id="${escapeHtml(w.id)}" title="Serve &amp; watch the wiki in a container and open it in a new window">Open Local Site</button>`
+  const containerStatus = containerStatuses.get(w.id) ?? null;
+  const isServing = !!containerStatus;
+  const serveBtn = hasLocal
+    ? isServing
+      ? `<button class="w3-btn w3-btn-sm" data-action="stop-container" data-id="${escapeHtml(w.id)}" title="Stop the per-wiki preview container">Stop</button>`
+      : `<button class="w3-btn w3-btn-sm" data-action="start-container" data-id="${escapeHtml(w.id)}" title="Start the per-wiki preview container (jupyter lite serve in Apple Container)">Serve</button>`
+    : '';
+  const localSiteBtn = hasLocal && isServing && containerStatus
+    ? `<button class="w3-btn w3-btn-primary w3-btn-sm" data-action="open-local-site-external" data-id="${escapeHtml(w.id)}" title="Open ${escapeHtml(containerStatus.url)} in your default browser">Site</button>`
     : '';
   const pullBtn = hasLocal && hasRemote
     ? `<button class="w3-btn w3-btn-sm" data-action="pull-wiki" data-id="${escapeHtml(w.id)}" title="git pull origin">Pull</button>`
     : '';
 
   const pocCheckbox = hasLocal && hasRemote
-    ? `<label class="w3-ws-poc" title="When checked, a successful Commit also pushes and publishes.">
+    ? `<label class="w3-ws-poc" title="When checked, a successful Commit also pushes.">
          <input type="checkbox" data-action="toggle-publish-on-commit" data-id="${escapeHtml(w.id)}" ${w.publish_on_commit ? 'checked' : ''} />
          Publish on Commit
+       </label>`
+    : '';
+  const autostartCheckbox = hasLocal
+    ? `<label class="w3-ws-poc" title="When checked, the preview container starts automatically when the app launches.">
+         <input type="checkbox" data-action="toggle-autostart-container" data-id="${escapeHtml(w.id)}" ${w.autostart_container ? 'checked' : ''} />
+         Autostart Container
        </label>`
     : '';
 
@@ -365,7 +380,8 @@ function renderCard(w: Wiki): string {
         ${commitBtn}
         ${publishBtn}
         ${buildBtn}
-        ${openLocalSiteBtn}
+        ${serveBtn}
+        ${localSiteBtn}
         ${pullBtn}
         ${remoteBtn}
         ${revealBtn}
@@ -374,7 +390,7 @@ function renderCard(w: Wiki): string {
         ${reopenAllBtn}
         <button class="w3-btn w3-btn-sm w3-btn-danger" data-action="remove-wiki" data-id="${escapeHtml(w.id)}" title="Remove from dashboard">Remove</button>
       </div>
-      ${pocCheckbox ? `<div class="w3-ws-poc-row">${pocCheckbox}</div>` : ''}
+      ${pocCheckbox || autostartCheckbox ? `<div class="w3-ws-poc-row">${pocCheckbox}${autostartCheckbox}</div>` : ''}
       ${windowsList}
     </div>`;
 }
@@ -415,6 +431,20 @@ async function refresh(): Promise<void> {
   } catch (e) {
     console.error('Failed to load wikis:', e);
   }
+  // Refresh container statuses for wikis with a local path. Failures
+  // are non-fatal — we just leave the previous status in place.
+  await Promise.all(
+    wikis
+      .filter((w) => !!w.local_path)
+      .map(async (w) => {
+        try {
+          const s = await wikiApi.wikiContainerStatus(w.id);
+          containerStatuses.set(w.id, s);
+        } catch {
+          /* keep previous status */
+        }
+      }),
+  );
   render();
 }
 
@@ -624,14 +654,16 @@ async function buildSite(wikiId: string): Promise<void> {
   closeBtn.addEventListener('click', () => dlg.remove());
 }
 
-async function openLocalSite(wikiId: string): Promise<void> {
+async function startContainer(wikiId: string): Promise<void> {
   const w = wikis.find((x) => x.id === wikiId);
   if (!w) return;
   const dlg = showDialog(`
-    <h3>Opening Local Site — ${escapeHtml(w.name)}</h3>
+    <h3>Starting Preview Container — ${escapeHtml(w.name)}</h3>
     <div class="w3-muted" style="font-size:13px;">
-      Starting the serve &amp; watch containers in Apple Container.
-      This can take a moment on first run while the image is built.
+      Starting <code>jupyter lite serve</code> in Apple Container.
+      The first run can take a while while the image is built and
+      <code>jupyter lite build</code> completes. The Site button will
+      appear on the card once the server is accepting connections.
     </div>
     <div class="w3-dialog-status" id="serve-status" style="display:block;margin-top:12px;">Working…</div>
     <div class="w3-dialog-actions">
@@ -640,11 +672,10 @@ async function openLocalSite(wikiId: string): Promise<void> {
   const status = dlg.querySelector('#serve-status') as HTMLElement;
   const closeBtn = dlg.querySelector('[data-act="close"]') as HTMLButtonElement;
   try {
-    const { url } = await wikiApi.wikiOpenLocalSite(wikiId);
-    status.textContent = `Serving on ${url} — opening window…`;
-    await wikiApi.openNewWindowForWiki(url, wikiId);
-    dlg.remove();
-    return;
+    const site = await wikiApi.wikiStartContainer(wikiId);
+    containerStatuses.set(wikiId, site);
+    status.textContent = `Serving on ${site.url}`;
+    await refresh();
   } catch (err) {
     status.classList.add('w3-error');
     status.textContent = String(err);
@@ -883,10 +914,17 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         await wikiApi.restoreDefaultWikis();
         await refresh();
         break;
-      case 'open-site':
-        await wikiApi.openWikiSite(id);
+      case 'open-site': {
+        const w = wikis.find((x) => x.id === id);
+        const url = w?.site_url ?? null;
+        if (url) {
+          await wikiApi.openExternalUrl(url);
+        } else {
+          await wikiApi.openWikiSite(id);
+        }
         await refresh();
         break;
+      }
       case 'open-remote':
         await wikiApi.openWikiRemote(id);
         break;
@@ -945,13 +983,13 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         break;
       case 'publish-wiki': {
         const go = window.confirm(
-          'Publish this wiki?\n\nThis will push to origin and trigger the remote site build. Run Pull later to refresh your local copy once the build finishes.',
+          'Publish this wiki?\n\nThis pushes the current branch to origin. Site rebuilds happen via whatever CI you have configured on the remote (if any).',
         );
         if (!go) return;
         try {
           await wikiApi.wikiPublish(id);
           await refresh();
-          alert('Pushed. The site build has been triggered — run Pull later to refresh the local copy.');
+          alert('Pushed to origin.');
         } catch (err) {
           alert(`Publish failed: ${err}`);
         }
@@ -969,9 +1007,25 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
       case 'build-site':
         await buildSite(id);
         break;
-      case 'open-local-site':
-        await openLocalSite(id);
+      case 'start-container':
+        await startContainer(id);
         break;
+      case 'stop-container':
+        try {
+          await wikiApi.wikiStopContainer(id);
+          containerStatuses.set(id, null);
+          await refresh();
+        } catch (err) {
+          alert(`Stop failed: ${err}`);
+        }
+        break;
+      case 'open-local-site-external': {
+        const status = containerStatuses.get(id);
+        if (status?.url) {
+          await wikiApi.openExternalUrl(status.url);
+        }
+        break;
+      }
       case 'toggle-publish-on-commit': {
         const checked = (target as HTMLInputElement).checked;
         try {
@@ -980,6 +1034,18 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           if (w) w.publish_on_commit = checked;
         } catch (err) {
           // Revert the checkbox on error.
+          (target as HTMLInputElement).checked = !checked;
+          alert(String(err));
+        }
+        break;
+      }
+      case 'toggle-autostart-container': {
+        const checked = (target as HTMLInputElement).checked;
+        try {
+          await wikiApi.setWikiAutostartContainer(id, checked);
+          const w = wikis.find((x) => x.id === id);
+          if (w) w.autostart_container = checked;
+        } catch (err) {
           (target as HTMLInputElement).checked = !checked;
           alert(String(err));
         }

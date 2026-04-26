@@ -96,6 +96,10 @@ pub struct Wiki {
     /// publishes the site. Only meaningful when `local_path` is set.
     #[serde(default)]
     pub publish_on_commit: bool,
+    /// If true, the per-wiki preview container is started automatically
+    /// when the app launches. Only meaningful when `local_path` is set.
+    #[serde(default)]
+    pub autostart_container: bool,
 }
 
 fn default_origin() -> WikiOrigin {
@@ -167,6 +171,7 @@ pub struct UpdateWikiParams {
     pub site_url: Option<Option<String>>,
     pub description: Option<Option<String>>,
     pub publish_on_commit: Option<bool>,
+    pub autostart_container: Option<bool>,
 }
 
 /// Parse a GitHub HTTPS / SSH URL into `(owner, repo)`.
@@ -338,6 +343,7 @@ mod tests {
             created_at: now,
             last_opened_at: now,
             publish_on_commit: false,
+            autostart_container: false,
         };
         assert!(bad.validate().is_err());
 
@@ -395,6 +401,7 @@ mod tests {
             created_at: now,
             last_opened_at: now,
             publish_on_commit: false,
+            autostart_container: false,
         };
         let j = serde_json::to_string(&w).unwrap();
         let back: Wiki = serde_json::from_str(&j).unwrap();

@@ -33,6 +33,7 @@ export interface Wiki {
   created_at: string;
   last_opened_at: string;
   publish_on_commit: boolean;
+  autostart_container: boolean;
 }
 
 export interface AddWikiParams {
@@ -51,6 +52,7 @@ export interface UpdateWikiParams {
   site_url?: string | null;
   description?: string | null;
   publish_on_commit?: boolean;
+  autostart_container?: boolean;
 }
 
 export interface GitStatus {

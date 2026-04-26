@@ -143,9 +143,10 @@ fn is_url_allowed_for_site_window(app: &AppHandle, url: &tauri::Url) -> bool {
         return true;
     }
 
-    // Loopback preview: `wiki_open_local_site` publishes the wiki's
-    // serve container on 127.0.0.1:<port in 8000-8099>. Anything
-    // outside that port range must come through the wiki allowlist.
+    // Loopback preview: `wiki_start_container` publishes the wiki's
+    // serve container on the loopback hostname at a port in 8000-8099.
+    // The Site button currently opens loopback URLs in the OS browser
+    // (not in-app), so this allowlist branch is mostly defensive.
     if url.scheme() == "http" && (host == "127.0.0.1" || host == "localhost") {
         if let Some(p) = url.port() {
             if (8000..=8099).contains(&p) {

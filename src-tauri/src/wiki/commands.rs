@@ -98,6 +98,26 @@ pub fn set_wiki_publish_on_commit(
         .map_err(err)
 }
 
+/// Toggle the per-wiki "Autostart preview container" flag.
+#[command]
+pub fn set_wiki_autostart_container(
+    app: AppHandle,
+    wiki_id: String,
+    value: bool,
+) -> Result<Wiki, String> {
+    let state = app.state::<WikiState>();
+    state
+        .manager
+        .update(
+            &wiki_id,
+            UpdateWikiParams {
+                autostart_container: Some(value),
+                ..Default::default()
+            },
+        )
+        .map_err(err)
+}
+
 /// Restore the default seeded wikis (adds them if not already present).
 #[command]
 pub fn restore_default_wikis(app: AppHandle) -> Result<Vec<Wiki>, String> {
@@ -261,6 +281,7 @@ pub async fn open_local_repo_as_wiki(app: AppHandle, local_path: String) -> Resu
         created_at: chrono::Utc::now(),
         last_opened_at: chrono::Utc::now(),
         publish_on_commit: false,
+        autostart_container: false,
     };
 
     state.manager.add(wiki).map_err(err)
@@ -364,6 +385,7 @@ pub async fn clone_wiki_into(
         created_at: chrono::Utc::now(),
         last_opened_at: chrono::Utc::now(),
         publish_on_commit: false,
+        autostart_container: false,
     };
     manager.add(wiki).map_err(err)
 }

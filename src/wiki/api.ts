@@ -51,6 +51,11 @@ export function setWikiPublishOnCommit(wikiId: string, value: boolean): Promise<
   return invoke<Wiki>('set_wiki_publish_on_commit', { wikiId, value });
 }
 
+/** Toggle the "Autostart preview container" flag for a wiki. */
+export function setWikiAutostartContainer(wikiId: string, value: boolean): Promise<Wiki> {
+  return invoke<Wiki>('set_wiki_autostart_container', { wikiId, value });
+}
+
 export function restoreDefaultWikis(): Promise<Wiki[]> {
   return invoke<Wiki[]>('restore_default_wikis');
 }
@@ -139,18 +144,17 @@ export function wikiBuildSite(
 }
 
 /**
- * Start a local preview server (serve + watch) for the wiki inside
- * Apple Container. Returns the loopback URL to open in a new window.
+ * Start (or re-attach to) the per-wiki preview container. Idempotent:
+ * returns the existing running site if already started. Returns the
+ * loopback URL once the serve port is accepting connections.
  */
-export function wikiOpenLocalSite(
-  wikiId: string,
-): Promise<{ url: string; host_port: number }> {
-  return invoke<{ url: string; host_port: number }>('wiki_open_local_site', { wikiId });
+export function wikiStartContainer(wikiId: string): Promise<RunningSite> {
+  return invoke<RunningSite>('wiki_start_container', { wikiId });
 }
 
-/** Stop the preview containers for a wiki (best-effort). */
-export function wikiCloseLocalSite(wikiId: string): Promise<void> {
-  return invoke<void>('wiki_close_local_site', { wikiId });
+/** Stop the preview container for a wiki (best-effort). */
+export function wikiStopContainer(wikiId: string): Promise<void> {
+  return invoke<void>('wiki_stop_container', { wikiId });
 }
 
 export interface RunningSite {
@@ -161,8 +165,8 @@ export interface RunningSite {
   url: string;
 }
 
-export function wikiLocalSiteStatus(wikiId: string): Promise<RunningSite | null> {
-  return invoke<RunningSite | null>('wiki_local_site_status', { wikiId });
+export function wikiContainerStatus(wikiId: string): Promise<RunningSite | null> {
+  return invoke<RunningSite | null>('wiki_container_status', { wikiId });
 }
 
 /** Open an arbitrary URL in a new in-app window tagged to a wiki. */

@@ -11,11 +11,10 @@ use tauri::{command, AppHandle, Manager};
 
 use crate::git::ops as git;
 use crate::providers::github::auth::GitHubAuth;
-use crate::providers::github::publish::enable_github_pages;
 use crate::publishing_commands::PublishingState;
 use crate::wiki::commands::WikiState;
 use crate::wiki::types::Wiki;
-use crate::workspace::types::{GitStatus, PublishMode, PushResult};
+use crate::workspace::types::{GitStatus, PushResult};
 
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
@@ -101,37 +100,22 @@ pub async fn wiki_pull(app: AppHandle, wiki_id: String) -> Result<String, String
     git::pull(&path, "origin", &branch).await.map_err(err)
 }
 
-/// Publish the wiki: push and best-effort enable GitHub Pages. Does not
-/// block waiting for the Pages build to complete (that can take minutes);
-/// the UI should call `wiki_pull` later to refresh the local copy.
+/// Publish the wiki: push the current branch to `origin`. Site
+/// hosting (e.g. GitHub Pages) is intentionally not enabled here —
+/// users wire up their own CI / hosting per-repo.
 #[command]
 pub async fn wiki_publish(
     app: AppHandle,
     wiki_id: String,
 ) -> Result<serde_json::Value, String> {
     let wiki = get_wiki(&app, &wiki_id)?;
-    let path = require_local(&wiki)?;
-    let remote = wiki
+    // Require a remote so we fail clearly when there's nothing to push to.
+    let _ = wiki
         .remote
         .as_ref()
         .ok_or_else(|| "This wiki has no remote to publish to".to_string())?;
 
-    // Push first.
     let push_result = wiki_push(app.clone(), wiki_id.clone()).await?;
-
-    // Best-effort: enable Pages. Requires an auth token; log & continue on failure.
-    let state = app.state::<PublishingState>();
-    let auth = GitHubAuth::new(state_data_dir(&state).to_path_buf());
-    if auth.has_token() {
-        let publish_mode = crate::providers::github::publish::detect_publish_mode_local(&path);
-        if !matches!(publish_mode, PublishMode::None) {
-            if let Err(e) =
-                enable_github_pages(&auth, &remote.owner, &remote.repo, &publish_mode).await
-            {
-                log::warn!("enable_github_pages failed: {e}");
-            }
-        }
-    }
 
     Ok(serde_json::json!({
         "push": push_result,

@@ -179,6 +179,9 @@ impl WikiManager {
         if let Some(b) = patch.publish_on_commit {
             w.publish_on_commit = b;
         }
+        if let Some(b) = patch.autostart_container {
+            w.autostart_container = b;
+        }
         w.last_opened_at = Utc::now();
         w.validate().map_err(|e| WikiError::Invalid(e.into()))?;
         let updated = w.clone();
@@ -222,6 +225,7 @@ impl WikiManager {
             created_at: now,
             last_opened_at: now,
             publish_on_commit: false,
+            autostart_container: false,
         })
     }
 
@@ -261,6 +265,7 @@ fn workspace_to_wiki(ws: &Workspace) -> Wiki {
         created_at: ws.created_at,
         last_opened_at: ws.last_opened_at,
         publish_on_commit: false,
+        autostart_container: false,
     }
 }
 
@@ -301,6 +306,7 @@ fn seeded(owner: &str, repo: &str, description: &str, now: chrono::DateTime<Utc>
         created_at: now,
         last_opened_at: now,
         publish_on_commit: false,
+        autostart_container: false,
     }
 }
 

@@ -56,7 +56,7 @@ struct Inner {
     /// True once we've spawned at least one container this session.
     /// Stays true until a shutdown sweep runs, so we still do an
     /// orphan check on quit even if every tracked site was cleaned
-    /// up via `wiki_close_local_site` in the meantime.
+    /// up via `wiki_stop_container` in the meantime.
     touched_containers: bool,
 }
 
@@ -456,12 +456,13 @@ pub async fn start_site(
         return Err(e);
     }
 
+    let host = crate::wiki::loopback_host::loopback_hostname();
     let site = RunningSite {
         wiki_id: wiki_id.to_string(),
         serve_container: serve_name,
         watch_container: None,
         host_port,
-        url: format!("http://127.0.0.1:{host_port}/"),
+        url: format!("http://{host}:{host_port}/"),
     };
     log_stream::emit_info(
         app,
@@ -623,19 +624,14 @@ pub async fn force_stop_service(manager: &LocalSiteManager) -> Result<(), String
 
 // ── Tauri commands ──────────────────────────────────────────────────────
 
-/// Returned to the frontend so it can open the preview window.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct OpenLocalSiteResponse {
-    pub url: String,
-    pub host_port: u16,
-}
-
+/// Start (or re-attach to) the per-wiki preview container. Idempotent:
+/// returns the existing `RunningSite` if one is already tracked.
 #[tauri::command]
-pub async fn wiki_open_local_site(
+pub async fn wiki_start_container(
     app: tauri::AppHandle,
     manager: tauri::State<'_, LocalSiteManager>,
     wiki_id: String,
-) -> Result<OpenLocalSiteResponse, String> {
+) -> Result<RunningSite, String> {
     use tauri::Manager;
     let wiki = app
         .state::<crate::wiki::commands::WikiState>()
@@ -651,23 +647,22 @@ pub async fn wiki_open_local_site(
     if !local_path.exists() {
         return Err(format!("Local path does not exist: {}", local_path.display()));
     }
-    let site = start_site(&app, manager.inner(), &wiki_id, &local_path).await?;
-    Ok(OpenLocalSiteResponse {
-        url: site.url,
-        host_port: site.host_port,
-    })
+    start_site(&app, manager.inner(), &wiki_id, &local_path).await
 }
 
+/// Stop the per-wiki preview container (best-effort, idempotent).
 #[tauri::command]
-pub async fn wiki_close_local_site(
+pub async fn wiki_stop_container(
     manager: tauri::State<'_, LocalSiteManager>,
     wiki_id: String,
 ) -> Result<(), String> {
     stop_site(manager.inner(), &wiki_id).await
 }
 
+/// Current status of the per-wiki preview container, or `None` if
+/// nothing is running.
 #[tauri::command]
-pub async fn wiki_local_site_status(
+pub async fn wiki_container_status(
     manager: tauri::State<'_, LocalSiteManager>,
     wiki_id: String,
 ) -> Result<Option<RunningSite>, String> {
