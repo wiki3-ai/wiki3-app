@@ -23,8 +23,8 @@ use crate::wiki::commands::WikiState;
 /// Resolve `requested` to a canonical path that lives under one of
 /// the wikis registered in [`WikiState`].
 fn resolve_within_wikis(state: &WikiState, requested: &Path) -> Result<PathBuf, String> {
-    let canonical = std::fs::canonicalize(requested)
-        .map_err(|e| format!("{}: {e}", requested.display()))?;
+    let canonical =
+        std::fs::canonicalize(requested).map_err(|e| format!("{}: {e}", requested.display()))?;
     let wikis = state
         .manager
         .list()
