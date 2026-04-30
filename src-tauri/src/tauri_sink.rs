@@ -11,9 +11,9 @@ use tauri::{AppHandle, Emitter};
 use devcontainer_core::events::EventSink;
 use devcontainer_core::LogStreamKind;
 
-pub struct TauriSink<'a>(pub &'a AppHandle);
+pub struct TauriSink(pub AppHandle);
 
-impl EventSink for TauriSink<'_> {
+impl EventSink for TauriSink {
     fn status(
         &self,
         workspace_id: &str,

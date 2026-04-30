@@ -210,7 +210,12 @@ pub async fn wiki_container_ctl_up(
 ) -> Result<ContainerStatus, String> {
     let path = prepare(&wiki_state, &orchestrator, &wiki_id)?;
     orchestrator
-        .up_with_sink(&TauriSink(&app), &registry, &wiki_id, &path)
+        .up_with_sink(
+            std::sync::Arc::new(TauriSink(app.clone())),
+            &registry,
+            &wiki_id,
+            &path,
+        )
         .await
         .map(ContainerStatus::from_core)
         .map_err(|e| e.to_string())
@@ -226,7 +231,7 @@ pub async fn wiki_container_ctl_stop(
 ) -> Result<ContainerStatus, String> {
     prepare(&wiki_state, &orchestrator, &wiki_id)?;
     orchestrator
-        .stop_with_sink(&TauriSink(&app), &registry, &wiki_id)
+        .stop_with_sink(&TauriSink(app.clone()), &registry, &wiki_id)
         .await
         .map(ContainerStatus::from_core)
         .map_err(|e| e.to_string())
@@ -242,10 +247,15 @@ pub async fn wiki_container_ctl_restart(
 ) -> Result<ContainerStatus, String> {
     let path = prepare(&wiki_state, &orchestrator, &wiki_id)?;
     let _ = orchestrator
-        .stop_with_sink(&TauriSink(&app), &registry, &wiki_id)
+        .stop_with_sink(&TauriSink(app.clone()), &registry, &wiki_id)
         .await;
     orchestrator
-        .up_with_sink(&TauriSink(&app), &registry, &wiki_id, &path)
+        .up_with_sink(
+            std::sync::Arc::new(TauriSink(app.clone())),
+            &registry,
+            &wiki_id,
+            &path,
+        )
         .await
         .map(ContainerStatus::from_core)
         .map_err(|e| e.to_string())
@@ -261,7 +271,12 @@ pub async fn wiki_container_ctl_rebuild(
 ) -> Result<ContainerStatus, String> {
     let path = prepare(&wiki_state, &orchestrator, &wiki_id)?;
     orchestrator
-        .rebuild_with_sink(&TauriSink(&app), &registry, &wiki_id, &path)
+        .rebuild_with_sink(
+            std::sync::Arc::new(TauriSink(app.clone())),
+            &registry,
+            &wiki_id,
+            &path,
+        )
         .await
         .map(ContainerStatus::from_core)
         .map_err(|e| e.to_string())
@@ -277,7 +292,7 @@ pub async fn wiki_container_ctl_remove(
 ) -> Result<ContainerStatus, String> {
     prepare(&wiki_state, &orchestrator, &wiki_id)?;
     orchestrator
-        .remove_with_sink(&TauriSink(&app), &registry, &wiki_id)
+        .remove_with_sink(&TauriSink(app.clone()), &registry, &wiki_id)
         .await
         .map(ContainerStatus::from_core)
         .map_err(|e| e.to_string())

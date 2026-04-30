@@ -96,6 +96,26 @@ function initLogsPanel(): void {
     // First log line of a session: auto-reveal so the user can see it.
     if (!logsVisible()) setLogsVisible(true);
   });
+  // devcontainer-core's LifecycleOrchestrator emits its own event
+  // names. Bridge them into the same panel so users see container
+  // build / start / postStartCommand output here too.
+  interface DevcontainerLogEvent {
+    workspaceId: string;
+    stream: 'stdout' | 'stderr' | 'system';
+    line: string;
+    ts: number;
+  }
+  void listen<DevcontainerLogEvent>('devcontainer://log', (e) => {
+    const p = e.payload;
+    appendLog({
+      wiki_id: p.workspaceId,
+      source: 'container',
+      level: p.stream === 'stderr' ? 'stderr' : p.stream === 'system' ? 'info' : 'stdout',
+      line: p.line,
+      ts: p.ts,
+    });
+    if (!logsVisible()) setLogsVisible(true);
+  });
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
