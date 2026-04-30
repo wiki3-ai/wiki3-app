@@ -10,6 +10,7 @@ import { listen } from '@tauri-apps/api/event';
 import * as wikiApi from './wiki/api';
 import { computeReorder } from './wiki/dashboard-logic';
 import type { TrackedWindowInfo, Wiki } from './wiki/types';
+import { loadAndSubmitDevcontainer } from './devcontainer-engine';
 import {
   toolsStatus,
   toolsCacheInfo,
@@ -37,9 +38,7 @@ interface LogLine {
   ts: number;
 }
 
-const LOG_MAX_LINES = 5000;
-
-function logsPanel(): HTMLElement | null {
+const LOG_MAX_LINES = 5000;function logsPanel(): HTMLElement | null {
   return document.getElementById('w3-logs-panel');
 }
 
@@ -934,6 +933,19 @@ function renderCacheRow(c: CacheRow): string {
 
 // ── Event handling ───────────────────────────────────────────────────────
 
+/**
+ * Read `.devcontainer/devcontainer.json` for `wikiId`, parse it via
+ * the embedded engine, and submit the result to Rust so the
+ * orchestrator picks up the latest config (including any changes the
+ * user just made on disk). Container-mutating actions call this
+ * before invoking the corresponding `wiki_container_ctl_*` command.
+ */
+async function ensureDevcontainerSubmitted(wikiId: string): Promise<void> {
+  const w = wikis.find((x) => x.id === wikiId);
+  if (!w?.local_path) return;
+  await loadAndSubmitDevcontainer(wikiId, w.local_path);
+}
+
 async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
   const action = target.getAttribute('data-action');
   if (!action) return;
@@ -1083,6 +1095,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
       }
       case 'container-up':
         try {
+          await ensureDevcontainerSubmitted(id);
           const s = await wikiApi.wikiContainerCtlUp(id);
           containerCtlStatuses.set(id, s);
           render();
@@ -1101,6 +1114,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         break;
       case 'container-restart':
         try {
+          await ensureDevcontainerSubmitted(id);
           const s = await wikiApi.wikiContainerCtlRestart(id);
           containerCtlStatuses.set(id, s);
           render();
@@ -1111,6 +1125,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
       case 'container-rebuild':
         if (!window.confirm('Rebuild the image and recreate the container? Any in-container state is lost.')) return;
         try {
+          await ensureDevcontainerSubmitted(id);
           const s = await wikiApi.wikiContainerCtlRebuild(id);
           containerCtlStatuses.set(id, s);
           render();

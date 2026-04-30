@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod commands_devcontainer;
 pub mod config;
 pub mod git;
 pub mod host;
@@ -319,6 +320,15 @@ pub fn run() {
             wiki::container_controls::wiki_container_ctl_restart,
             wiki::container_controls::wiki_container_ctl_rebuild,
             wiki::container_controls::wiki_container_ctl_remove,
+            // Devcontainer engine bridge — fs sandbox + parsed-config
+            // submission, called by the JS engine bundle running in
+            // the WebView (see `src/devcontainer-engine.ts`).
+            commands_devcontainer::fs_is_file,
+            commands_devcontainer::fs_read_file,
+            commands_devcontainer::fs_write_file,
+            commands_devcontainer::fs_read_dir,
+            commands_devcontainer::fs_mkdirp,
+            commands_devcontainer::submit_parsed_devcontainer,
             // Managed tools: Apple Container is the only external
             // dependency, and we only detect it (never install it).
             tools::commands::detect_apple_container,
