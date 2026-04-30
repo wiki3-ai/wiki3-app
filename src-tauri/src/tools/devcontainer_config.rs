@@ -285,6 +285,37 @@ mod tests {
     }
 
     #[test]
+    fn accepts_jsonc_with_comments_and_trailing_commas() {
+        // devcontainer.json is officially JSONC; VS Code and the
+        // upstream CLI both tolerate // line comments, /* */ block
+        // comments, and trailing commas. We mirror that.
+        let src = r#"{
+            // line comment
+            "image": "ubuntu:22.04", /* block // comment */
+            "name": "test", // with a "quoted" snippet
+            "forwardPorts": [
+                8888,
+            ],
+        }"#;
+        let cfg = resolve_config_js(src).unwrap();
+        assert_eq!(cfg.image.as_deref(), Some("ubuntu:22.04"));
+        assert_eq!(cfg.name.as_deref(), Some("test"));
+        assert_eq!(cfg.forward_ports.len(), 1);
+    }
+
+    #[test]
+    fn preserves_comment_like_substrings_inside_strings() {
+        let cfg = resolve_config_js(
+            r#"{"image":"ubuntu","name":"https://example.com/path // not a comment"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.name.as_deref(),
+            Some("https://example.com/path // not a comment")
+        );
+    }
+
+    #[test]
     fn resolves_forward_ports() {
         let cfg =
             resolve_config_js(r#"{"image":"img","forwardPorts":[3000,8080]}"#).unwrap();

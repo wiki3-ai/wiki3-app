@@ -12,10 +12,69 @@
 // All I/O is handled by the Rust caller; this module is pure logic so
 // it can run in QuickJS without any host APIs.
 
+// Strip JSONC features (// and /* */ comments, trailing commas) so
+// JSON.parse accepts the input. devcontainer.json is officially JSONC
+// per the spec, and VS Code / the upstream CLI both tolerate these.
+// String contents are preserved verbatim — we walk character-by-
+// character and only treat comment/comma syntax as such when outside
+// a JSON string literal.
+function stripJsonc(src) {
+  var out = '';
+  var i = 0;
+  var n = src.length;
+  while (i < n) {
+    var c = src.charAt(i);
+    // Inside a string: copy through to the closing quote, honouring
+    // backslash escapes so an escaped quote doesn't end the string.
+    if (c === '"') {
+      out += c;
+      i++;
+      while (i < n) {
+        var d = src.charAt(i);
+        out += d;
+        i++;
+        if (d === '\\' && i < n) {
+          out += src.charAt(i);
+          i++;
+        } else if (d === '"') {
+          break;
+        }
+      }
+      continue;
+    }
+    // Line comment: skip until end-of-line (preserve the newline so
+    // line numbers in JSON.parse errors stay meaningful).
+    if (c === '/' && i + 1 < n && src.charAt(i + 1) === '/') {
+      i += 2;
+      while (i < n && src.charAt(i) !== '\n') i++;
+      continue;
+    }
+    // Block comment: skip until */ (preserve embedded newlines).
+    if (c === '/' && i + 1 < n && src.charAt(i + 1) === '*') {
+      i += 2;
+      while (i < n) {
+        if (src.charAt(i) === '*' && i + 1 < n && src.charAt(i + 1) === '/') {
+          i += 2;
+          break;
+        }
+        if (src.charAt(i) === '\n') out += '\n';
+        i++;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  // Trailing commas before } or ]: drop them. Safe because we already
+  // stripped strings/comments above (commas inside strings won't match
+  // since this regex is run on the stripped output).
+  return out.replace(/,(\s*[}\]])/g, '$1');
+}
+
 function resolveConfig(jsonStr) {
   var raw;
   try {
-    raw = JSON.parse(jsonStr);
+    raw = JSON.parse(stripJsonc(jsonStr));
   } catch (e) {
     throw new Error('Invalid JSON in devcontainer.json: ' + e.message);
   }

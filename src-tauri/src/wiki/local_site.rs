@@ -348,7 +348,8 @@ pub async fn start_site(
         "Resolving devcontainer image…",
     );
     let resolved =
-        devcontainer_image::ensure_devcontainer_image(&container_bin, workspace).await?;
+        devcontainer_image::ensure_devcontainer_image(&container_bin, workspace, app, Some(wiki_id))
+            .await?;
     log_stream::emit_info(
         app,
         Some(wiki_id),

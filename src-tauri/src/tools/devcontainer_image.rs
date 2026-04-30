@@ -4,7 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
+use tauri::AppHandle;
+
 use super::devcontainer_config::{self, DevcontainerConfig};
+use crate::wiki::log_stream;
 
 /// Result of resolving a devcontainer into a runnable image.
 pub struct ResolvedImage {
@@ -24,9 +27,15 @@ pub struct ResolvedImage {
 /// Discover `.devcontainer/devcontainer.json`, parse it, and make
 /// sure the referenced image is available (building it on the fly
 /// from any `build.dockerfile` stanza).
+///
+/// `app` and `wiki_id` are used to stream `container build` output
+/// to the frontend log pane in real time. Without that, a slow
+/// first-run pull of the FROM image looks like a hang to the user.
 pub async fn ensure_devcontainer_image(
     container_bin: &Path,
     workspace: &Path,
+    app: &AppHandle,
+    wiki_id: Option<&str>,
 ) -> Result<ResolvedImage, String> {
     let configs = devcontainer_config::find_devcontainer_configs(workspace);
     let cfg_path = configs
@@ -60,23 +69,40 @@ pub async fn ensure_devcontainer_image(
         let dockerfile_abs = cfg_dir.join(dockerfile);
         let tag = format!("wiki3-build-{}:latest", sanitize_tag(&workspace_name));
 
-        let build_out = tokio::process::Command::new(container_bin)
-            .arg("build")
+        log_stream::emit_info(
+            app,
+            wiki_id,
+            "build",
+            format!(
+                "container build --tag {tag} --file {} {} (this includes pulling the FROM image on first run; expect several minutes for large bases)",
+                dockerfile_abs.display(),
+                context_abs.display(),
+            ),
+        );
+
+        // `--progress plain` forces line-buffered text output so we
+        // can stream it. With the default `auto` mode buildkit
+        // suppresses output until completion when stdout isn't a
+        // tty, which makes the UI look frozen during long pulls.
+        let mut cmd = tokio::process::Command::new(container_bin);
+        cmd.arg("build")
+            .arg("--progress")
+            .arg("plain")
             .arg("--tag")
             .arg(&tag)
             .arg("--file")
             .arg(&dockerfile_abs)
-            .arg(&context_abs)
-            .output()
-            .await
-            .map_err(|e| format!("failed to spawn `container build`: {e}"))?;
+            .arg(&context_abs);
 
-        if !build_out.status.success() {
+        let (status, stdout_tail, stderr_tail) =
+            log_stream::run_and_stream(app, wiki_id, "build", cmd).await?;
+
+        if !status.success() {
             return Err(format!(
                 "container build failed (exit {:?}):\n--- stderr ---\n{}\n--- stdout ---\n{}",
-                build_out.status.code(),
-                String::from_utf8_lossy(&build_out.stderr),
-                String::from_utf8_lossy(&build_out.stdout),
+                status.code(),
+                stderr_tail,
+                stdout_tail,
             ));
         }
         tag
