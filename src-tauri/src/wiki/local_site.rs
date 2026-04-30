@@ -178,10 +178,7 @@ fn pick_free_port() -> Result<u16, String> {
 /// devcontainer config. Missing or non-string values yield `None`,
 /// in which case callers fall back to the standard
 /// `postStartCommand` or a built-in default.
-fn extract_wiki3_command(
-    customizations: Option<&serde_json::Value>,
-    key: &str,
-) -> Option<String> {
+fn extract_wiki3_command(customizations: Option<&serde_json::Value>, key: &str) -> Option<String> {
     customizations?
         .get("wiki3")?
         .get(key)?
@@ -341,15 +338,14 @@ pub async fn start_site(
     }
 
     // 3. Resolve / build the devcontainer image.
-    log_stream::emit_info(
+    log_stream::emit_info(app, Some(wiki_id), "serve", "Resolving devcontainer image…");
+    let resolved = devcontainer_image::ensure_devcontainer_image(
+        &container_bin,
+        workspace,
         app,
         Some(wiki_id),
-        "serve",
-        "Resolving devcontainer image…",
-    );
-    let resolved =
-        devcontainer_image::ensure_devcontainer_image(&container_bin, workspace, app, Some(wiki_id))
-            .await?;
+    )
+    .await?;
     log_stream::emit_info(
         app,
         Some(wiki_id),
@@ -370,10 +366,8 @@ pub async fn start_site(
     // one bind-mount, one log stream, and no virtio-fs
     // cross-container visibility questions.
     let host_port = pick_free_port()?;
-    let cport = container_port_from_forward_ports(
-        &resolved.config.forward_ports,
-        CONTAINER_SERVE_PORT,
-    );
+    let cport =
+        container_port_from_forward_ports(&resolved.config.forward_ports, CONTAINER_SERVE_PORT);
     // The foreground (serve) command, in priority order:
     //   1. `customizations.wiki3.serveCommand` — wiki3-specific
     //      override that knows about port/ip.
@@ -484,12 +478,7 @@ pub async fn start_site(
         host_port,
         url: format!("http://{host}:{host_port}/"),
     };
-    log_stream::emit_info(
-        app,
-        Some(wiki_id),
-        "serve",
-        format!("Ready: {}", site.url),
-    );
+    log_stream::emit_info(app, Some(wiki_id), "serve", format!("Ready: {}", site.url));
     manager.insert(site.clone());
     Ok(site)
 }
@@ -556,10 +545,7 @@ pub async fn shutdown_all(manager: &LocalSiteManager) -> ShutdownReport {
     // Stop our containers first.
     let our_names: Vec<String> = sites
         .iter()
-        .flat_map(|s| {
-            std::iter::once(s.serve_container.clone())
-                .chain(s.watch_container.clone())
-        })
+        .flat_map(|s| std::iter::once(s.serve_container.clone()).chain(s.watch_container.clone()))
         .collect();
 
     for name in &our_names {
@@ -665,7 +651,10 @@ pub async fn wiki_start_container(
         .ok_or_else(|| "Wiki has no local path".to_string())?;
     let local_path = PathBuf::from(local);
     if !local_path.exists() {
-        return Err(format!("Local path does not exist: {}", local_path.display()));
+        return Err(format!(
+            "Local path does not exist: {}",
+            local_path.display()
+        ));
     }
     start_site(&app, manager.inner(), &wiki_id, &local_path).await
 }
@@ -787,5 +776,4 @@ mod tests {
         // take_ resets it so next call is false.
         assert!(!m.take_started_service());
     }
-
 }

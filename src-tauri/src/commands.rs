@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use tauri::{command, AppHandle, Manager, State};
 use tauri::webview::WebviewWindowBuilder;
+use tauri::{command, AppHandle, Manager, State};
 
 use crate::config;
 use crate::host::DesktopHostState;
@@ -117,9 +117,7 @@ pub fn get_execution_state(
 }
 
 #[command]
-pub fn get_app_config(
-    state: State<'_, DesktopHostState>,
-) -> Result<serde_json::Value, String> {
+pub fn get_app_config(state: State<'_, DesktopHostState>) -> Result<serde_json::Value, String> {
     let config = state.config.lock().map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
@@ -273,7 +271,10 @@ pub fn open_new_window_with_geometry(
 // =============================================================================
 
 #[command]
-pub fn list_wiki_windows(app: AppHandle, wiki_id: String) -> Result<Vec<TrackedWindowInfo>, String> {
+pub fn list_wiki_windows(
+    app: AppHandle,
+    wiki_id: String,
+) -> Result<Vec<TrackedWindowInfo>, String> {
     let state = app.state::<WindowStateManager>();
     Ok(state.windows_for_wiki(&wiki_id))
 }

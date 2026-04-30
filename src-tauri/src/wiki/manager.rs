@@ -115,10 +115,8 @@ impl WikiManager {
     /// no entry can be lost by a partial list.
     pub fn reorder(&self, order: &[String]) -> Result<(), WikiError> {
         let wikis = self.list()?;
-        let mut by_id: std::collections::HashMap<String, Wiki> = wikis
-            .iter()
-            .map(|w| (w.id.clone(), w.clone()))
-            .collect();
+        let mut by_id: std::collections::HashMap<String, Wiki> =
+            wikis.iter().map(|w| (w.id.clone(), w.clone())).collect();
         let mut result: Vec<Wiki> = Vec::with_capacity(wikis.len());
         for id in order {
             if let Some(w) = by_id.remove(id) {
@@ -192,9 +190,10 @@ impl WikiManager {
     /// Convenience: build a new wiki from free-form params.
     pub fn build_from_params(&self, params: AddWikiParams) -> Result<Wiki, WikiError> {
         let remote = params.remote_url.as_deref().and_then(remote_from_url);
-        let local_path = params
-            .local_path
-            .and_then(|p| if p.trim().is_empty() { None } else { Some(p) });
+        let local_path =
+            params
+                .local_path
+                .and_then(|p| if p.trim().is_empty() { None } else { Some(p) });
         let site_url = params
             .site_url
             .and_then(|p| if p.trim().is_empty() { None } else { Some(p) });
@@ -205,13 +204,12 @@ impl WikiManager {
             ));
         }
 
-        let name = params.name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
-            Wiki::derive_name(
-                local_path.as_deref(),
-                remote.as_ref(),
-                site_url.as_deref(),
-            )
-        });
+        let name = params
+            .name
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or_else(|| {
+                Wiki::derive_name(local_path.as_deref(), remote.as_ref(), site_url.as_deref())
+            });
 
         let now = Utc::now();
         Ok(Wiki {
@@ -273,12 +271,7 @@ fn workspace_to_wiki(ws: &Workspace) -> Wiki {
 pub fn default_seeded_wikis() -> Vec<Wiki> {
     let now = Utc::now();
     vec![
-        seeded(
-            "wiki3-ai",
-            "wiki3-ai-site",
-            "The public Wiki3 site",
-            now,
-        ),
+        seeded("wiki3-ai", "wiki3-ai-site", "The public Wiki3 site", now),
         seeded(
             "wiki3-ai",
             "wiki3-ai-template",

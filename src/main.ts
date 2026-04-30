@@ -23,6 +23,7 @@ let trackedWindows: TrackedWindowInfo[] = [];
 const expanded = new Set<string>();
 // Per-wiki preview-container status. Null/missing = not running.
 const containerStatuses = new Map<string, wikiApi.RunningSite | null>();
+const containerCtlStatuses = new Map<string, wikiApi.ContainerControlStatus | null>();
 
 const content = () => document.getElementById('main-content');
 
@@ -263,10 +264,6 @@ function renderCard(w: Wiki): string {
   const closedCount = windows.filter((x) => x.closed).length;
   const isExpanded = expanded.has(w.id);
 
-  const siteBtn = hasSite || hasRemote
-    ? `<button class="w3-btn w3-btn-primary w3-btn-sm" data-action="open-site" data-id="${escapeHtml(w.id)}">Open Site</button>`
-    : '';
-
   const cloneBtn =
     hasRemote && !hasLocal
       ? `<button class="w3-btn w3-btn-sm" data-action="clone-to-local" data-id="${escapeHtml(w.id)}">Clone…</button>`
@@ -280,25 +277,23 @@ function renderCard(w: Wiki): string {
     ? `<button class="w3-btn w3-btn-sm" data-action="open-remote" data-id="${escapeHtml(w.id)}">Open on GitHub</button>`
     : '';
 
-  // Local-repo-only actions: commit / publish / build.
+  // Local-repo-only actions: commit.
   const commitBtn = hasLocal
     ? `<button class="w3-btn w3-btn-sm" data-action="commit-wiki" data-id="${escapeHtml(w.id)}" title="Commit changes in the local repo">Commit…</button>`
     : '';
-  const publishBtn = hasLocal && hasRemote
-    ? `<button class="w3-btn w3-btn-sm" data-action="publish-wiki" data-id="${escapeHtml(w.id)}" title="Push and publish the site">Publish</button>`
-    : '';
-  const buildBtn = hasLocal
-    ? `<button class="w3-btn w3-btn-sm" data-action="build-site" data-id="${escapeHtml(w.id)}" title="Run &#x60;jupyter lite build&#x60; in the local repo">Build</button>`
-    : '';
-  const containerStatus = containerStatuses.get(w.id) ?? null;
-  const isServing = !!containerStatus;
-  const serveBtn = hasLocal
-    ? isServing
-      ? `<button class="w3-btn w3-btn-sm" data-action="stop-container" data-id="${escapeHtml(w.id)}" title="Stop the per-wiki preview container">Stop</button>`
-      : `<button class="w3-btn w3-btn-sm" data-action="start-container" data-id="${escapeHtml(w.id)}" title="Start the per-wiki preview container (jupyter lite serve in Apple Container)">Serve</button>`
-    : '';
-  const localSiteBtn = hasLocal && isServing && containerStatus
-    ? `<button class="w3-btn w3-btn-primary w3-btn-sm" data-action="open-local-site-external" data-id="${escapeHtml(w.id)}" title="Open ${escapeHtml(containerStatus.url)} in your default browser">Site</button>`
+  const ctlStatus = containerCtlStatuses.get(w.id) ?? null;
+  const ctlState = ctlStatus?.state ?? 'unknown';
+  const ctlRunning = ctlState === 'running';
+  const ctlExists = ctlRunning || ctlState === 'stopped' || ctlState === 'created';
+  const containerRow = hasLocal
+    ? `<div class="w3-ws-actions w3-ws-container-row">
+         <span class="w3-ws-container-label" title="Devcontainer state">Container: <strong>${escapeHtml(ctlState)}</strong></span>
+         <button class="w3-btn w3-btn-sm" data-action="container-up" data-id="${escapeHtml(w.id)}" ${ctlRunning ? 'disabled' : ''} title="Start (devcontainer up)">Start</button>
+         <button class="w3-btn w3-btn-sm" data-action="container-stop" data-id="${escapeHtml(w.id)}" ${ctlRunning ? '' : 'disabled'} title="Stop the container">Stop</button>
+         <button class="w3-btn w3-btn-sm" data-action="container-restart" data-id="${escapeHtml(w.id)}" ${ctlExists ? '' : 'disabled'} title="Stop then start">Restart</button>
+         <button class="w3-btn w3-btn-sm" data-action="container-rebuild" data-id="${escapeHtml(w.id)}" title="Rebuild the image and recreate the container">Rebuild</button>
+         <button class="w3-btn w3-btn-sm w3-btn-danger" data-action="container-remove" data-id="${escapeHtml(w.id)}" ${ctlExists ? '' : 'disabled'} title="Remove the container">Remove</button>
+       </div>`
     : '';
   const pullBtn = hasLocal && hasRemote
     ? `<button class="w3-btn w3-btn-sm" data-action="pull-wiki" data-id="${escapeHtml(w.id)}" title="git pull origin">Pull</button>`
@@ -374,14 +369,10 @@ function renderCard(w: Wiki): string {
       <div style="display:flex;flex-direction:column;gap:4px;margin:8px 0;">
         ${links.join('')}
       </div>
+      ${containerRow}
       <div class="w3-ws-actions">
-        ${siteBtn}
         ${cloneBtn}
         ${commitBtn}
-        ${publishBtn}
-        ${buildBtn}
-        ${serveBtn}
-        ${localSiteBtn}
         ${pullBtn}
         ${remoteBtn}
         ${revealBtn}
@@ -440,6 +431,12 @@ async function refresh(): Promise<void> {
         try {
           const s = await wikiApi.wikiContainerStatus(w.id);
           containerStatuses.set(w.id, s);
+        } catch {
+          /* keep previous status */
+        }
+        try {
+          const c = await wikiApi.wikiContainerCtlStatus(w.id);
+          containerCtlStatuses.set(w.id, c);
         } catch {
           /* keep previous status */
         }
@@ -1064,6 +1061,53 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         }
         break;
       }
+      case 'container-up':
+        try {
+          const s = await wikiApi.wikiContainerCtlUp(id);
+          containerCtlStatuses.set(id, s);
+          render();
+        } catch (err) {
+          alert(`Start failed: ${err}`);
+        }
+        break;
+      case 'container-stop':
+        try {
+          const s = await wikiApi.wikiContainerCtlStop(id);
+          containerCtlStatuses.set(id, s);
+          render();
+        } catch (err) {
+          alert(`Stop failed: ${err}`);
+        }
+        break;
+      case 'container-restart':
+        try {
+          const s = await wikiApi.wikiContainerCtlRestart(id);
+          containerCtlStatuses.set(id, s);
+          render();
+        } catch (err) {
+          alert(`Restart failed: ${err}`);
+        }
+        break;
+      case 'container-rebuild':
+        if (!window.confirm('Rebuild the image and recreate the container? Any in-container state is lost.')) return;
+        try {
+          const s = await wikiApi.wikiContainerCtlRebuild(id);
+          containerCtlStatuses.set(id, s);
+          render();
+        } catch (err) {
+          alert(`Rebuild failed: ${err}`);
+        }
+        break;
+      case 'container-remove':
+        if (!window.confirm('Remove this container? It will need to be rebuilt next time.')) return;
+        try {
+          const s = await wikiApi.wikiContainerCtlRemove(id);
+          containerCtlStatuses.set(id, s);
+          render();
+        } catch (err) {
+          alert(`Remove failed: ${err}`);
+        }
+        break;
       case 'toggle-publish-on-commit': {
         const checked = (target as HTMLInputElement).checked;
         try {

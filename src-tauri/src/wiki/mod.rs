@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod container_controls;
 pub mod git_commands;
 pub mod local_site;
 pub mod log_stream;

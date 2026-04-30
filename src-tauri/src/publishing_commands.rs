@@ -28,10 +28,7 @@ impl PublishingState {
             .join("Wiki3Sites");
 
         Self {
-            workspace_manager: WorkspaceManager::new(
-                data_dir.clone(),
-                workspaces_dir,
-            ),
+            workspace_manager: WorkspaceManager::new(data_dir.clone(), workspaces_dir),
             data_dir,
         }
     }
@@ -84,9 +81,7 @@ pub async fn store_github_token(
 
 /// Check current authentication status.
 #[command]
-pub async fn get_auth_status(
-    app: AppHandle,
-) -> Result<serde_json::Value, String> {
+pub async fn get_auth_status(app: AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<PublishingState>();
     let auth = state.auth();
 
@@ -114,9 +109,7 @@ pub async fn get_auth_status(
 
 /// Clear stored GitHub credentials.
 #[command]
-pub async fn clear_github_auth(
-    app: AppHandle,
-) -> Result<serde_json::Value, String> {
+pub async fn clear_github_auth(app: AppHandle) -> Result<serde_json::Value, String> {
     let state = app.state::<PublishingState>();
     state.auth().clear_token().map_err(|e| e.to_string())?;
     Ok(serde_json::json!({ "cleared": true }))
@@ -128,9 +121,7 @@ pub async fn clear_github_auth(
 
 /// List all known workspaces.
 #[command]
-pub async fn list_workspaces(
-    app: AppHandle,
-) -> Result<Vec<Workspace>, String> {
+pub async fn list_workspaces(app: AppHandle) -> Result<Vec<Workspace>, String> {
     let state = app.state::<PublishingState>();
     state
         .workspace_manager
@@ -299,9 +290,7 @@ pub async fn fork_site(
         .map_err(|e| e.to_string())?;
 
     // Add upstream remote pointing to the source repo
-    let upstream_url = format!(
-        "https://github.com/{source_owner}/{source_repo}.git"
-    );
+    let upstream_url = format!("https://github.com/{source_owner}/{source_repo}.git");
     git::add_remote(&local_path, "upstream", &upstream_url)
         .await
         .map_err(|e| e.to_string())?;
@@ -355,10 +344,7 @@ pub async fn fork_site(
 
 /// Get git status for a workspace.
 #[command]
-pub async fn get_git_status(
-    app: AppHandle,
-    workspace_id: String,
-) -> Result<GitStatus, String> {
+pub async fn get_git_status(app: AppHandle, workspace_id: String) -> Result<GitStatus, String> {
     let state = app.state::<PublishingState>();
     let ws = state
         .workspace_manager
@@ -366,9 +352,7 @@ pub async fn get_git_status(
         .map_err(|e| e.to_string())?
         .ok_or("Workspace not found")?;
 
-    git::status(&ws.local_path)
-        .await
-        .map_err(|e| e.to_string())
+    git::status(&ws.local_path).await.map_err(|e| e.to_string())
 }
 
 /// Commit all changes in a workspace.
@@ -396,10 +380,7 @@ pub async fn commit_changes(
 
 /// Push current branch to origin.
 #[command]
-pub async fn push_changes(
-    app: AppHandle,
-    workspace_id: String,
-) -> Result<PushResult, String> {
+pub async fn push_changes(app: AppHandle, workspace_id: String) -> Result<PushResult, String> {
     let state = app.state::<PublishingState>();
     let ws = state
         .workspace_manager
@@ -455,10 +436,7 @@ pub async fn commit_and_push(
 
 /// Publish/update the site for a workspace.
 #[command]
-pub async fn publish_site(
-    app: AppHandle,
-    workspace_id: String,
-) -> Result<PublishResult, String> {
+pub async fn publish_site(app: AppHandle, workspace_id: String) -> Result<PublishResult, String> {
     let state = app.state::<PublishingState>();
     let ws = state
         .workspace_manager
@@ -504,10 +482,7 @@ pub async fn detect_workspace_publish_mode(
 
 /// Register an existing local git repo as a workspace.
 #[command]
-pub async fn open_local_workspace(
-    app: AppHandle,
-    local_path: String,
-) -> Result<Workspace, String> {
+pub async fn open_local_workspace(app: AppHandle, local_path: String) -> Result<Workspace, String> {
     let state = app.state::<PublishingState>();
 
     if !git::is_git_repo(&local_path).await {
@@ -529,9 +504,7 @@ pub async fn open_local_workspace(
     let (owner, repo) = if let Some(parsed) = parse_github_url(&origin_url) {
         parsed
     } else if origin_url.is_empty() {
-        return Err(
-            "No 'origin' remote found. Please add a GitHub remote first.".to_string(),
-        );
+        return Err("No 'origin' remote found. Please add a GitHub remote first.".to_string());
     } else {
         return Err(
             "Could not parse GitHub owner/repo from the origin remote URL. Expected a github.com URL.".to_string(),
@@ -669,13 +642,19 @@ mod tests {
     #[test]
     fn test_parse_github_url_https() {
         let result = parse_github_url("https://github.com/wiki3-ai/wiki3-app.git");
-        assert_eq!(result, Some(("wiki3-ai".to_string(), "wiki3-app".to_string())));
+        assert_eq!(
+            result,
+            Some(("wiki3-ai".to_string(), "wiki3-app".to_string()))
+        );
     }
 
     #[test]
     fn test_parse_github_url_ssh() {
         let result = parse_github_url("git@github.com:wiki3-ai/wiki3-app.git");
-        assert_eq!(result, Some(("wiki3-ai".to_string(), "wiki3-app".to_string())));
+        assert_eq!(
+            result,
+            Some(("wiki3-ai".to_string(), "wiki3-app".to_string()))
+        );
     }
 
     #[test]

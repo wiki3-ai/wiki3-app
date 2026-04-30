@@ -104,10 +104,7 @@ pub async fn wiki_pull(app: AppHandle, wiki_id: String) -> Result<String, String
 /// hosting (e.g. GitHub Pages) is intentionally not enabled here —
 /// users wire up their own CI / hosting per-repo.
 #[command]
-pub async fn wiki_publish(
-    app: AppHandle,
-    wiki_id: String,
-) -> Result<serde_json::Value, String> {
+pub async fn wiki_publish(app: AppHandle, wiki_id: String) -> Result<serde_json::Value, String> {
     let wiki = get_wiki(&app, &wiki_id)?;
     // Require a remote so we fail clearly when there's nothing to push to.
     let _ = wiki
@@ -168,10 +165,7 @@ pub async fn wiki_commit_and_maybe_publish(
 /// `jupyter lite build` directly on the host, for backward
 /// compatibility with existing wikis.
 #[command]
-pub async fn wiki_build_site(
-    app: AppHandle,
-    wiki_id: String,
-) -> Result<serde_json::Value, String> {
+pub async fn wiki_build_site(app: AppHandle, wiki_id: String) -> Result<serde_json::Value, String> {
     use tokio::process::Command;
 
     let wiki = get_wiki(&app, &wiki_id)?;
@@ -182,9 +176,7 @@ pub async fn wiki_build_site(
     }
 
     // Prefer the sandboxed path when the repo declares a devcontainer.
-    if path_ref.join(".devcontainer").exists()
-        || path_ref.join(".devcontainer.json").exists()
-    {
+    if path_ref.join(".devcontainer").exists() || path_ref.join(".devcontainer.json").exists() {
         return build_site_in_devcontainer(&app, &wiki_id, &path).await;
     }
 
@@ -210,7 +202,11 @@ pub async fn wiki_build_site(
     if !status.success() {
         return Err(format!(
             "jupyter lite build failed:\n{}",
-            if stderr.trim().is_empty() { &stdout } else { &stderr }
+            if stderr.trim().is_empty() {
+                &stdout
+            } else {
+                &stderr
+            }
         ));
     }
 
@@ -254,9 +250,10 @@ async fn build_site_in_devcontainer(
                 .to_string(),
         );
     }
-    let container_bin = ac.path.clone().ok_or_else(|| {
-        "Apple Container detection succeeded but returned no path".to_string()
-    })?;
+    let container_bin = ac
+        .path
+        .clone()
+        .ok_or_else(|| "Apple Container detection succeeded but returned no path".to_string())?;
 
     log_stream::emit_info(
         app,
@@ -298,10 +295,7 @@ async fn build_site_in_devcontainer(
 
     // The directory containing devcontainer.json — build paths in the
     // config are relative to this.
-    let cfg_dir = cfg_path
-        .parent()
-        .unwrap_or(workspace_path)
-        .to_path_buf();
+    let cfg_dir = cfg_path.parent().unwrap_or(workspace_path).to_path_buf();
 
     // --- 4. Resolve image: either explicit `image` or build a Dockerfile ---
     let workspace_name = workspace_path
@@ -339,13 +333,8 @@ async fn build_site_in_devcontainer(
             .arg(&dockerfile_abs)
             .arg(&context_abs);
 
-        let (status, stdout, stderr) = log_stream::run_and_stream(
-            app,
-            Some(wiki_id),
-            "image-build",
-            build_cmd,
-        )
-        .await?;
+        let (status, stdout, stderr) =
+            log_stream::run_and_stream(app, Some(wiki_id), "image-build", build_cmd).await?;
 
         if !status.success() {
             return Err(format!(
@@ -394,11 +383,7 @@ async fn build_site_in_devcontainer(
         run_cmd.arg("--user").arg(user);
     }
 
-    run_cmd
-        .arg(&image_ref)
-        .arg("bash")
-        .arg("-lc")
-        .arg(&cmd_str);
+    run_cmd.arg(&image_ref).arg("bash").arg("-lc").arg(&cmd_str);
 
     let (status, stdout, stderr) =
         log_stream::run_and_stream(app, Some(wiki_id), "build", run_cmd).await?;

@@ -20,11 +20,7 @@ pub trait RepoProvider {
     async fn fork_repo(&self, params: &ForkRepoParams) -> Result<RepoCreatedInfo, ProviderError>;
 
     /// Get metadata for a remote repository.
-    async fn get_repo_info(
-        &self,
-        owner: &str,
-        repo: &str,
-    ) -> Result<RepoMetadata, ProviderError>;
+    async fn get_repo_info(&self, owner: &str, repo: &str) -> Result<RepoMetadata, ProviderError>;
 }
 
 /// Trait for publishing a static site from a workspace.
@@ -39,10 +35,7 @@ pub trait PublishProvider {
     ) -> Result<PublishMode, ProviderError>;
 
     /// Publish or update the site.
-    async fn publish(
-        &self,
-        workspace: &Workspace,
-    ) -> Result<PublishResult, ProviderError>;
+    async fn publish(&self, workspace: &Workspace) -> Result<PublishResult, ProviderError>;
 
     /// Get the URL where the site would be published.
     fn site_url(&self, owner: &str, repo: &str) -> String;

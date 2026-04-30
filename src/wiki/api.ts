@@ -169,6 +169,40 @@ export function wikiContainerStatus(wikiId: string): Promise<RunningSite | null>
   return invoke<RunningSite | null>('wiki_container_status', { wikiId });
 }
 
+// ── Generic container controls (devcontainer-core) ───────────────────
+//
+// Thin wrappers around the new `wiki_container_ctl_*` Tauri commands.
+// These are independent of the wiki-specific `Serve` flow above and
+// drive the start/stop/restart/rebuild/remove buttons on each card.
+
+export interface ContainerControlStatus {
+  wikiId: string;
+  state: string;
+  containerId?: string | null;
+  imageRef?: string | null;
+  error?: string | null;
+  configDrift?: boolean;
+}
+
+export function wikiContainerCtlStatus(wikiId: string): Promise<ContainerControlStatus> {
+  return invoke<ContainerControlStatus>('wiki_container_ctl_status', { wikiId });
+}
+export function wikiContainerCtlUp(wikiId: string): Promise<ContainerControlStatus> {
+  return invoke<ContainerControlStatus>('wiki_container_ctl_up', { wikiId });
+}
+export function wikiContainerCtlStop(wikiId: string): Promise<ContainerControlStatus> {
+  return invoke<ContainerControlStatus>('wiki_container_ctl_stop', { wikiId });
+}
+export function wikiContainerCtlRestart(wikiId: string): Promise<ContainerControlStatus> {
+  return invoke<ContainerControlStatus>('wiki_container_ctl_restart', { wikiId });
+}
+export function wikiContainerCtlRebuild(wikiId: string): Promise<ContainerControlStatus> {
+  return invoke<ContainerControlStatus>('wiki_container_ctl_rebuild', { wikiId });
+}
+export function wikiContainerCtlRemove(wikiId: string): Promise<ContainerControlStatus> {
+  return invoke<ContainerControlStatus>('wiki_container_ctl_remove', { wikiId });
+}
+
 /** Open an arbitrary URL in a new in-app window tagged to a wiki. */
 export function openNewWindowForWiki(url: string, wikiId: string): Promise<void> {
   return invoke<void>('open_new_window_for_wiki', { url, wikiId });

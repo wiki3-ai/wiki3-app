@@ -58,9 +58,10 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .build()?;
 
     // File menu
-    let new_from_template = MenuItemBuilder::with_id(ID_NEW_FROM_TEMPLATE, "New Wiki from Template…")
-        .accelerator("CmdOrCtrl+N")
-        .build(app)?;
+    let new_from_template =
+        MenuItemBuilder::with_id(ID_NEW_FROM_TEMPLATE, "New Wiki from Template…")
+            .accelerator("CmdOrCtrl+N")
+            .build(app)?;
     let clone_wiki = MenuItemBuilder::with_id(ID_CLONE_WIKI, "Clone Wiki…")
         .accelerator("CmdOrCtrl+Shift+O")
         .build(app)?;
@@ -78,7 +79,10 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .separator()
         .item(&open_url)
         .separator()
-        .item(&PredefinedMenuItem::close_window(app, Some("Close Window"))?)
+        .item(&PredefinedMenuItem::close_window(
+            app,
+            Some("Close Window"),
+        )?)
         .build()?;
 
     // Edit (standard items)
@@ -124,7 +128,9 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     // Help
     let help_readme = MenuItemBuilder::with_id(ID_HELP_README, "Wiki3 on GitHub").build(app)?;
-    let help_menu = SubmenuBuilder::new(app, "Help").item(&help_readme).build()?;
+    let help_menu = SubmenuBuilder::new(app, "Help")
+        .item(&help_readme)
+        .build()?;
 
     #[cfg(target_os = "macos")]
     let menu = MenuBuilder::new(app)

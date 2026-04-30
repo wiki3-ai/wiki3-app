@@ -130,10 +130,7 @@ mod tests {
     #[test]
     fn test_workspace_crud() {
         let dir = tempdir().unwrap();
-        let mgr = WorkspaceManager::new(
-            dir.path().to_path_buf(),
-            dir.path().join("workspaces"),
-        );
+        let mgr = WorkspaceManager::new(dir.path().to_path_buf(), dir.path().join("workspaces"));
 
         // Empty initially
         assert!(mgr.list_workspaces().unwrap().is_empty());
@@ -165,10 +162,7 @@ mod tests {
     #[test]
     fn test_default_clone_path() {
         let dir = tempdir().unwrap();
-        let mgr = WorkspaceManager::new(
-            dir.path().to_path_buf(),
-            dir.path().join("workspaces"),
-        );
+        let mgr = WorkspaceManager::new(dir.path().to_path_buf(), dir.path().join("workspaces"));
         let path = mgr.default_clone_path("my-site");
         assert!(path.ends_with("workspaces/my-site"));
     }

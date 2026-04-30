@@ -6,6 +6,7 @@ pub mod menu;
 pub mod permissions;
 pub mod providers;
 pub mod publishing_commands;
+pub mod tauri_sink;
 pub mod tools;
 pub mod wiki;
 pub mod window_state;
@@ -99,6 +100,11 @@ pub fn run() {
             app.manage(wiki_state);
             app.manage(tools_state);
             app.manage(crate::wiki::local_site::LocalSiteManager::new());
+            // devcontainer-core state for the new container controls
+            // (start/stop/restart/rebuild/remove). Lives alongside the
+            // legacy `LocalSiteManager` for now — callers can pick.
+            app.manage(devcontainer_core::RuntimeRegistry::with_default_backends());
+            app.manage(devcontainer_core::LifecycleOrchestrator::new());
 
             // Autostart per-wiki preview containers for any wikis with
             // `autostart_container = true` and a still-existing local
@@ -306,6 +312,13 @@ pub fn run() {
             wiki::local_site::wiki_stop_container,
             wiki::local_site::wiki_container_status,
             wiki::local_site::wiki_force_stop_container_service,
+            // Generic per-wiki container controls (devcontainer-core).
+            wiki::container_controls::wiki_container_ctl_status,
+            wiki::container_controls::wiki_container_ctl_up,
+            wiki::container_controls::wiki_container_ctl_stop,
+            wiki::container_controls::wiki_container_ctl_restart,
+            wiki::container_controls::wiki_container_ctl_rebuild,
+            wiki::container_controls::wiki_container_ctl_remove,
             // Managed tools: Apple Container is the only external
             // dependency, and we only detect it (never install it).
             tools::commands::detect_apple_container,

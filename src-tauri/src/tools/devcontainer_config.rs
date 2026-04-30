@@ -41,7 +41,11 @@ pub struct DevcontainerConfig {
     pub build: Option<BuildConfig>,
 
     /// Ports to forward from the container to the host.
-    #[serde(rename = "forwardPorts", default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(
+        rename = "forwardPorts",
+        default,
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub forward_ports: Vec<serde_json::Value>,
 
     /// Command to run once after the container is created.
@@ -157,7 +161,9 @@ fn resolve_config_js(json_str: &str) -> Result<DevcontainerConfig> {
             let f: Function = ctx.globals().get("resolveConfig")?;
             f.call((json_str.to_string(),))
         })
-        .map_err(|e| ToolsError::Script(format!("QuickJS error processing devcontainer.json: {e}")))?;
+        .map_err(|e| {
+            ToolsError::Script(format!("QuickJS error processing devcontainer.json: {e}"))
+        })?;
 
     serde_json::from_str::<DevcontainerConfig>(&normalised_json)
         .map_err(|e| ToolsError::Script(format!("failed to deserialise resolved config: {e}")))
@@ -250,10 +256,8 @@ mod tests {
 
     #[test]
     fn resolves_build_config() {
-        let cfg = resolve_config_js(
-            r#"{"build":{"dockerfile":"Dockerfile","context":".."}}"#,
-        )
-        .unwrap();
+        let cfg =
+            resolve_config_js(r#"{"build":{"dockerfile":"Dockerfile","context":".."}}"#).unwrap();
         assert!(cfg.image.is_none());
         let build = cfg.build.unwrap();
         assert_eq!(build.dockerfile.as_deref(), Some("Dockerfile"));
@@ -317,8 +321,7 @@ mod tests {
 
     #[test]
     fn resolves_forward_ports() {
-        let cfg =
-            resolve_config_js(r#"{"image":"img","forwardPorts":[3000,8080]}"#).unwrap();
+        let cfg = resolve_config_js(r#"{"image":"img","forwardPorts":[3000,8080]}"#).unwrap();
         assert_eq!(cfg.forward_ports.len(), 2);
     }
 
@@ -334,16 +337,14 @@ mod tests {
     #[test]
     fn resolves_post_create_command_string() {
         let cfg =
-            resolve_config_js(r#"{"image":"img","postCreateCommand":"npm install"}"#)
-                .unwrap();
+            resolve_config_js(r#"{"image":"img","postCreateCommand":"npm install"}"#).unwrap();
         let cmd = cfg.post_create_command.unwrap();
         assert_eq!(cmd.as_str(), Some("npm install"));
     }
 
     #[test]
     fn resolves_remote_user() {
-        let cfg =
-            resolve_config_js(r#"{"image":"img","remoteUser":"vscode"}"#).unwrap();
+        let cfg = resolve_config_js(r#"{"image":"img","remoteUser":"vscode"}"#).unwrap();
         assert_eq!(cfg.remote_user.as_deref(), Some("vscode"));
     }
 

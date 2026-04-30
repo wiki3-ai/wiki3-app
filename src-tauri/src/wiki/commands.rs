@@ -420,7 +420,10 @@ mod tests {
 
         // A file, not a directory
         let f = dir.path().join("a");
-        assert_eq!(is_empty_dir(f.to_string_lossy().to_string()).unwrap(), false);
+        assert_eq!(
+            is_empty_dir(f.to_string_lossy().to_string()).unwrap(),
+            false
+        );
     }
 
     /// End-to-end: clone from a local bare repo into an empty directory
@@ -476,8 +479,14 @@ mod tests {
         assert_eq!(wiki.local_path.as_deref(), Some(target.as_str()));
         // A freshly-cloned wiki carries no remote-of-record or site
         // URL — those are set when the user pushes to their own repo.
-        assert!(wiki.remote.is_none(), "cloned wiki should not carry a remote");
-        assert!(wiki.site_url.is_none(), "cloned wiki should not carry a site url");
+        assert!(
+            wiki.remote.is_none(),
+            "cloned wiki should not carry a remote"
+        );
+        assert!(
+            wiki.site_url.is_none(),
+            "cloned wiki should not carry a site url"
+        );
         // Name defaults to the target directory basename.
         assert_eq!(wiki.name, "cloned");
         // The cloned target must now contain a .git folder.
@@ -524,9 +533,7 @@ mod tests {
         let data = tempdir().unwrap();
         let manager = WikiManager::new(data.path().to_path_buf());
         assert!(clone_wiki_into(&manager, "", "/tmp/x").await.is_err());
-        assert!(clone_wiki_into(&manager, "https://x/y", "")
-            .await
-            .is_err());
+        assert!(clone_wiki_into(&manager, "https://x/y", "").await.is_err());
     }
 
     async fn run_git(dir: &std::path::Path, args: &[&str]) {

@@ -9,11 +9,7 @@ use std::path::Path;
 use crate::workspace::types::*;
 
 /// Run an arbitrary command in a directory, returning stdout.
-pub async fn run_command_in_dir(
-    dir: &str,
-    cmd: &str,
-    args: &[&str],
-) -> Result<String, GitError> {
+pub async fn run_command_in_dir(dir: &str, cmd: &str, args: &[&str]) -> Result<String, GitError> {
     let output = tokio::process::Command::new(cmd)
         .args(args)
         .current_dir(dir)
@@ -58,11 +54,7 @@ pub async fn clone(url: &str, dest: &str) -> Result<(), GitError> {
 
 /// Clone a repository with token-authenticated URL. Token is used only for
 /// the clone command and is not persisted in any config.
-pub async fn clone_authenticated(
-    url: &str,
-    dest: &str,
-    token: &str,
-) -> Result<(), GitError> {
+pub async fn clone_authenticated(url: &str, dest: &str, token: &str) -> Result<(), GitError> {
     let auth_url = inject_token(url, token);
     clone(&auth_url, dest).await?;
 
@@ -79,7 +71,9 @@ pub async fn current_branch(repo_path: &str) -> Result<String, GitError> {
 
 /// Get repository status.
 pub async fn status(repo_path: &str) -> Result<GitStatus, GitError> {
-    let branch = current_branch(repo_path).await.unwrap_or_else(|_| "main".to_string());
+    let branch = current_branch(repo_path)
+        .await
+        .unwrap_or_else(|_| "main".to_string());
 
     // Get porcelain status
     let porcelain = run_command_in_dir(repo_path, "git", &["status", "--porcelain=v1"])
@@ -301,24 +295,9 @@ async fn get_ahead_behind(repo_path: &str, branch: &str) -> (u32, u32) {
 
 async fn get_last_commit(repo_path: &str) -> Result<CommitInfo, GitError> {
     let sha = run_command_in_dir(repo_path, "git", &["rev-parse", "--short", "HEAD"]).await?;
-    let message = run_command_in_dir(
-        repo_path,
-        "git",
-        &["log", "-1", "--format=%s"],
-    )
-    .await?;
-    let author = run_command_in_dir(
-        repo_path,
-        "git",
-        &["log", "-1", "--format=%an"],
-    )
-    .await?;
-    let date = run_command_in_dir(
-        repo_path,
-        "git",
-        &["log", "-1", "--format=%ai"],
-    )
-    .await?;
+    let message = run_command_in_dir(repo_path, "git", &["log", "-1", "--format=%s"]).await?;
+    let author = run_command_in_dir(repo_path, "git", &["log", "-1", "--format=%an"]).await?;
+    let date = run_command_in_dir(repo_path, "git", &["log", "-1", "--format=%ai"]).await?;
 
     Ok(CommitInfo {
         sha,
@@ -330,26 +309,14 @@ async fn get_last_commit(repo_path: &str) -> Result<CommitInfo, GitError> {
 
 async fn ensure_git_user_config(repo_path: &str) -> Result<(), GitError> {
     // Check if user.name is set
-    let name_result =
-        run_command_in_dir(repo_path, "git", &["config", "user.name"]).await;
+    let name_result = run_command_in_dir(repo_path, "git", &["config", "user.name"]).await;
     if name_result.is_err() {
-        run_command_in_dir(
-            repo_path,
-            "git",
-            &["config", "user.name", "Wiki3 User"],
-        )
-        .await?;
+        run_command_in_dir(repo_path, "git", &["config", "user.name", "Wiki3 User"]).await?;
     }
 
-    let email_result =
-        run_command_in_dir(repo_path, "git", &["config", "user.email"]).await;
+    let email_result = run_command_in_dir(repo_path, "git", &["config", "user.email"]).await;
     if email_result.is_err() {
-        run_command_in_dir(
-            repo_path,
-            "git",
-            &["config", "user.email", "user@wiki3.ai"],
-        )
-        .await?;
+        run_command_in_dir(repo_path, "git", &["config", "user.email", "user@wiki3.ai"]).await?;
     }
 
     Ok(())

@@ -17,13 +17,10 @@ impl GitHubRepoProvider {
 
     /// Get an authenticated HTTP client.
     fn client(&self) -> Result<reqwest::Client, ProviderError> {
-        let token = self
-            .auth
-            .get_token()
-            .map_err(|e| match e {
-                AuthError::NoToken => ProviderError::AuthRequired,
-                other => ProviderError::AuthFailed(other.to_string()),
-            })?;
+        let token = self.auth.get_token().map_err(|e| match e {
+            AuthError::NoToken => ProviderError::AuthRequired,
+            other => ProviderError::AuthFailed(other.to_string()),
+        })?;
         build_github_client(&token).map_err(|e| ProviderError::AuthFailed(e.to_string()))
     }
 }
@@ -56,9 +53,7 @@ impl RepoProvider for GitHubRepoProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         let status = resp.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(ProviderError::AuthFailed(format!("HTTP {status}")));
         }
         if status == reqwest::StatusCode::NOT_FOUND {
@@ -96,14 +91,8 @@ impl RepoProvider for GitHubRepoProvider {
                 .as_str()
                 .unwrap_or(&params.repo_name)
                 .to_string(),
-            clone_url: repo_json["clone_url"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            html_url: repo_json["html_url"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
+            clone_url: repo_json["clone_url"].as_str().unwrap_or("").to_string(),
+            html_url: repo_json["html_url"].as_str().unwrap_or("").to_string(),
             default_branch: repo_json["default_branch"]
                 .as_str()
                 .unwrap_or("main")
@@ -134,9 +123,7 @@ impl RepoProvider for GitHubRepoProvider {
             .map_err(|e| ProviderError::Network(e.to_string()))?;
 
         let status = resp.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(ProviderError::AuthFailed(format!("HTTP {status}")));
         }
         if status == reqwest::StatusCode::NOT_FOUND {
@@ -161,14 +148,8 @@ impl RepoProvider for GitHubRepoProvider {
                 .unwrap_or("")
                 .to_string(),
             repo: fork_json["name"].as_str().unwrap_or("").to_string(),
-            clone_url: fork_json["clone_url"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            html_url: fork_json["html_url"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
+            clone_url: fork_json["clone_url"].as_str().unwrap_or("").to_string(),
+            html_url: fork_json["html_url"].as_str().unwrap_or("").to_string(),
             default_branch: fork_json["default_branch"]
                 .as_str()
                 .unwrap_or("main")
@@ -176,11 +157,7 @@ impl RepoProvider for GitHubRepoProvider {
         })
     }
 
-    async fn get_repo_info(
-        &self,
-        owner: &str,
-        repo: &str,
-    ) -> Result<RepoMetadata, ProviderError> {
+    async fn get_repo_info(&self, owner: &str, repo: &str) -> Result<RepoMetadata, ProviderError> {
         let client = self.client()?;
         let url = format!("https://api.github.com/repos/{owner}/{repo}");
 
@@ -213,18 +190,9 @@ impl RepoProvider for GitHubRepoProvider {
                 .as_str()
                 .unwrap_or(owner)
                 .to_string(),
-            repo: repo_json["name"]
-                .as_str()
-                .unwrap_or(repo)
-                .to_string(),
-            clone_url: repo_json["clone_url"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            html_url: repo_json["html_url"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
+            repo: repo_json["name"].as_str().unwrap_or(repo).to_string(),
+            clone_url: repo_json["clone_url"].as_str().unwrap_or("").to_string(),
+            html_url: repo_json["html_url"].as_str().unwrap_or("").to_string(),
             default_branch: repo_json["default_branch"]
                 .as_str()
                 .unwrap_or("main")
@@ -253,11 +221,9 @@ pub async fn poll_fork_ready(
     repo: &str,
     max_attempts: u32,
 ) -> Result<(), ProviderError> {
-    let token = auth
-        .get_token()
-        .map_err(|_| ProviderError::AuthRequired)?;
-    let client = build_github_client(&token)
-        .map_err(|e| ProviderError::AuthFailed(e.to_string()))?;
+    let token = auth.get_token().map_err(|_| ProviderError::AuthRequired)?;
+    let client =
+        build_github_client(&token).map_err(|e| ProviderError::AuthFailed(e.to_string()))?;
 
     for attempt in 1..=max_attempts {
         let url = format!("https://api.github.com/repos/{owner}/{repo}");
@@ -273,9 +239,7 @@ pub async fn poll_fork_ready(
         }
 
         if attempt < max_attempts {
-            log::info!(
-                "Fork not ready yet (attempt {attempt}/{max_attempts}), waiting..."
-            );
+            log::info!("Fork not ready yet (attempt {attempt}/{max_attempts}), waiting...");
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
@@ -338,9 +302,7 @@ mod tests {
     fn test_api_url_construction() {
         let template_owner = "wiki3-ai";
         let template_repo = "wiki3-ai-template";
-        let url = format!(
-            "https://api.github.com/repos/{template_owner}/{template_repo}/generate"
-        );
+        let url = format!("https://api.github.com/repos/{template_owner}/{template_repo}/generate");
         assert_eq!(
             url,
             "https://api.github.com/repos/wiki3-ai/wiki3-ai-template/generate"
@@ -348,9 +310,7 @@ mod tests {
 
         let source_owner = "wiki3-ai";
         let source_repo = "wiki3-ai-site";
-        let fork_url = format!(
-            "https://api.github.com/repos/{source_owner}/{source_repo}/forks"
-        );
+        let fork_url = format!("https://api.github.com/repos/{source_owner}/{source_repo}/forks");
         assert_eq!(
             fork_url,
             "https://api.github.com/repos/wiki3-ai/wiki3-ai-site/forks"

@@ -111,14 +111,12 @@ impl GitHubAuth {
     // -- Private helpers --
 
     fn store_token_file(&self, token: &str) -> Result<(), AuthError> {
-        std::fs::create_dir_all(&self.data_dir)
-            .map_err(|e| AuthError::Storage(e.to_string()))?;
+        std::fs::create_dir_all(&self.data_dir).map_err(|e| AuthError::Storage(e.to_string()))?;
         let path = self.data_dir.join(FALLBACK_FILE);
         let data = FallbackToken {
             token: token.to_string(),
         };
-        let json = serde_json::to_string(&data)
-            .map_err(|e| AuthError::Storage(e.to_string()))?;
+        let json = serde_json::to_string(&data).map_err(|e| AuthError::Storage(e.to_string()))?;
         std::fs::write(&path, json).map_err(|e| AuthError::Storage(e.to_string()))?;
 
         // Restrict file permissions on Unix
@@ -138,10 +136,9 @@ impl GitHubAuth {
         if !path.exists() {
             return Err(AuthError::NoToken);
         }
-        let data = std::fs::read_to_string(&path)
-            .map_err(|e| AuthError::Storage(e.to_string()))?;
-        let fb: FallbackToken = serde_json::from_str(&data)
-            .map_err(|e| AuthError::Storage(e.to_string()))?;
+        let data = std::fs::read_to_string(&path).map_err(|e| AuthError::Storage(e.to_string()))?;
+        let fb: FallbackToken =
+            serde_json::from_str(&data).map_err(|e| AuthError::Storage(e.to_string()))?;
         if fb.token.is_empty() {
             return Err(AuthError::NoToken);
         }
@@ -161,10 +158,7 @@ pub fn build_github_client(token: &str) -> Result<reqwest::Client, AuthError> {
         ACCEPT,
         HeaderValue::from_static("application/vnd.github+json"),
     );
-    headers.insert(
-        USER_AGENT,
-        HeaderValue::from_static("wiki3-app/0.1"),
-    );
+    headers.insert(USER_AGENT, HeaderValue::from_static("wiki3-app/0.1"));
     headers.insert(
         "X-GitHub-Api-Version",
         HeaderValue::from_static("2022-11-28"),

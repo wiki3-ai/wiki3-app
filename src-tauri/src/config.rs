@@ -35,9 +35,7 @@ impl AppConfig {
 
     /// Check whether a given origin is trusted.
     pub fn is_trusted_origin(&self, origin: &str) -> bool {
-        self.trusted_origins
-            .iter()
-            .any(|trusted| origin == trusted)
+        self.trusted_origins.iter().any(|trusted| origin == trusted)
     }
 }
 
@@ -49,7 +47,9 @@ mod tests {
     fn test_default_config() {
         let config = AppConfig::default();
         assert_eq!(config.site_url, DEFAULT_PRODUCTION_URL);
-        assert!(config.trusted_origins.contains(&"https://wiki3.ai".to_string()));
+        assert!(config
+            .trusted_origins
+            .contains(&"https://wiki3.ai".to_string()));
     }
 
     #[test]

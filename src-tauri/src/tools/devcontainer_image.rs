@@ -49,10 +49,7 @@ pub async fn ensure_devcontainer_image(
     let config = devcontainer_config::load_config(&cfg_path)
         .map_err(|e| format!("Failed to parse {}: {e}", cfg_path.display()))?;
 
-    let cfg_dir = cfg_path
-        .parent()
-        .unwrap_or(workspace)
-        .to_path_buf();
+    let cfg_dir = cfg_path.parent().unwrap_or(workspace).to_path_buf();
 
     let workspace_name = workspace
         .file_name()
@@ -183,9 +180,7 @@ fn rewrite_localhost_to_host_internal(url: &str) -> String {
         };
         // Determine end of host literal (stop at `:` `/` `?` `#`).
         let mut host_end = host_start;
-        while host_end < bytes.len()
-            && !matches!(bytes[host_end], b':' | b'/' | b'?' | b'#')
-        {
+        while host_end < bytes.len() && !matches!(bytes[host_end], b':' | b'/' | b'?' | b'#') {
             host_end += 1;
         }
         let host = &url[host_start..host_end];
@@ -243,18 +238,11 @@ mod tests {
 
     #[test]
     fn leaves_other_hosts_alone() {
-        assert_eq!(
-            r("http://proxy.corp:8080"),
-            "http://proxy.corp:8080"
-        );
+        assert_eq!(r("http://proxy.corp:8080"), "http://proxy.corp:8080");
     }
 
     #[test]
     fn handles_no_port() {
-        assert_eq!(
-            r("http://localhost"),
-            "http://host.docker.internal"
-        );
+        assert_eq!(r("http://localhost"), "http://host.docker.internal");
     }
 }
-

@@ -37,10 +37,7 @@ impl PublishProvider for GitHubPagesPublishProvider {
         Ok(detect_publish_mode_local(local_path))
     }
 
-    async fn publish(
-        &self,
-        workspace: &Workspace,
-    ) -> Result<PublishResult, ProviderError> {
+    async fn publish(&self, workspace: &Workspace) -> Result<PublishResult, ProviderError> {
         match &workspace.publish_mode {
             PublishMode::GhPagesBranch => {
                 self.publish_gh_pages_branch(workspace).await
@@ -68,7 +65,10 @@ impl PublishProvider for GitHubPagesPublishProvider {
 impl GitHubPagesPublishProvider {
     /// Query the GitHub Pages API for an existing config.
     async fn detect_from_api(&self, owner: &str, repo: &str) -> Result<PublishMode, ProviderError> {
-        let token = self.auth.get_token().map_err(|_| ProviderError::AuthRequired)?;
+        let token = self
+            .auth
+            .get_token()
+            .map_err(|_| ProviderError::AuthRequired)?;
         let client =
             build_github_client(&token).map_err(|e| ProviderError::AuthFailed(e.to_string()))?;
 
@@ -192,7 +192,9 @@ impl GitHubPagesPublishProvider {
         }
 
         // Stage docs, commit if dirty, push
-        git::add(local_path, &["docs/"]).await.map_err(|e| ProviderError::Git(e.to_string()))?;
+        git::add(local_path, &["docs/"])
+            .await
+            .map_err(|e| ProviderError::Git(e.to_string()))?;
 
         let status = git::status(local_path)
             .await
@@ -224,8 +226,7 @@ impl GitHubPagesPublishProvider {
         message: &str,
     ) -> Result<String, ProviderError> {
         // Use a temporary worktree approach: create orphan branch, copy files, push
-        let temp_dir = tempfile::tempdir()
-            .map_err(|e| ProviderError::Other(e.to_string()))?;
+        let temp_dir = tempfile::tempdir().map_err(|e| ProviderError::Other(e.to_string()))?;
         let temp_path = temp_dir.path().to_string_lossy().to_string();
 
         // Get remote URL
@@ -253,8 +254,7 @@ impl GitHubPagesPublishProvider {
         // Ensure .nojekyll exists
         let nojekyll = Path::new(&temp_path).join(".nojekyll");
         if !nojekyll.exists() {
-            std::fs::write(&nojekyll, "")
-                .map_err(|e| ProviderError::Other(e.to_string()))?;
+            std::fs::write(&nojekyll, "").map_err(|e| ProviderError::Other(e.to_string()))?;
         }
 
         // Remove .git from copied content if it got copied
@@ -262,9 +262,13 @@ impl GitHubPagesPublishProvider {
         let _ = std::fs::remove_dir_all(dot_git);
 
         // Set git user for the temp repo
-        git::run_command_in_dir(&temp_path, "git", &["config", "user.email", "wiki3-app@wiki3.ai"])
-            .await
-            .map_err(|e| ProviderError::Git(e.to_string()))?;
+        git::run_command_in_dir(
+            &temp_path,
+            "git",
+            &["config", "user.email", "wiki3-app@wiki3.ai"],
+        )
+        .await
+        .map_err(|e| ProviderError::Git(e.to_string()))?;
         git::run_command_in_dir(&temp_path, "git", &["config", "user.name", "Wiki3 App"])
             .await
             .map_err(|e| ProviderError::Git(e.to_string()))?;
@@ -283,13 +287,9 @@ impl GitHubPagesPublishProvider {
         git::run_command_in_dir(&temp_path, "git", &["remote", "add", "origin", &auth_url])
             .await
             .map_err(|e| ProviderError::Git(e.to_string()))?;
-        git::run_command_in_dir(
-            &temp_path,
-            "git",
-            &["push", "--force", "origin", branch],
-        )
-        .await
-        .map_err(|e| ProviderError::Git(e.to_string()))?;
+        git::run_command_in_dir(&temp_path, "git", &["push", "--force", "origin", branch])
+            .await
+            .map_err(|e| ProviderError::Git(e.to_string()))?;
 
         Ok(format!("Published to {branch} branch"))
     }
