@@ -91,8 +91,41 @@ pub async fn ensure_devcontainer_image(
             .arg("--tag")
             .arg(&tag)
             .arg("--file")
-            .arg(&dockerfile_abs)
-            .arg(&context_abs);
+            .arg(&dockerfile_abs);
+
+        // Forward HTTP(S)_PROXY / NO_PROXY from the host environment
+        // as buildkit "proxy build args". Buildkit predeclares these
+        // names so they reach RUN steps without requiring ARG lines
+        // in the Dockerfile, and they are stripped from the recorded
+        // image config so they don't bake into the layer metadata.
+        //
+        // localhost on the host is reachable from inside Apple
+        // Container builds as `host.docker.internal` (registered by
+        // devcontainer-core), so a Squid at `127.0.0.1:3128` on the
+        // Mac can be reached by setting:
+        //
+        //     HTTPS_PROXY=http://host.docker.internal:3128
+        for (build_arg_name, env_names) in [
+            ("HTTP_PROXY", ["HTTP_PROXY", "http_proxy"]),
+            ("HTTPS_PROXY", ["HTTPS_PROXY", "https_proxy"]),
+            ("NO_PROXY", ["NO_PROXY", "no_proxy"]),
+            ("FTP_PROXY", ["FTP_PROXY", "ftp_proxy"]),
+            ("ALL_PROXY", ["ALL_PROXY", "all_proxy"]),
+        ] {
+            if let Some(value) = env_names
+                .iter()
+                .find_map(|n| std::env::var(n).ok().filter(|v| !v.is_empty()))
+            {
+                // Rewrite `localhost`/`127.0.0.1` to
+                // `host.docker.internal` so values like Squid on
+                // localhost still work from inside the build.
+                let value = rewrite_localhost_to_host_internal(&value);
+                cmd.arg("--build-arg")
+                    .arg(format!("{build_arg_name}={value}"));
+            }
+        }
+
+        cmd.arg(&context_abs);
 
         let (status, stdout_tail, stderr_tail) =
             log_stream::run_and_stream(app, wiki_id, "build", cmd).await?;
@@ -122,6 +155,50 @@ pub async fn ensure_devcontainer_image(
     })
 }
 
+/// Rewrite `localhost` / `127.0.0.1` / `::1` host components in a
+/// proxy URL to `host.docker.internal` so the URL works from inside
+/// a build container (where `localhost` is the build container
+/// itself, not the developer's Mac).
+fn rewrite_localhost_to_host_internal(url: &str) -> String {
+    // String-level rewrite is sufficient: proxy URLs are simple and
+    // pulling in a URL crate just for this would be overkill. We
+    // only touch host literals that appear immediately after `://`
+    // or `@` and stop at the next `:`/`/` so paths and ports are
+    // preserved verbatim.
+    let mut out = String::with_capacity(url.len() + 16);
+    let bytes = url.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        // Look for `://` or `@` boundary.
+        let host_start = if bytes[i..].starts_with(b"://") {
+            out.push_str("://");
+            i + 3
+        } else if bytes[i] == b'@' {
+            out.push('@');
+            i + 1
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
+        };
+        // Determine end of host literal (stop at `:` `/` `?` `#`).
+        let mut host_end = host_start;
+        while host_end < bytes.len()
+            && !matches!(bytes[host_end], b':' | b'/' | b'?' | b'#')
+        {
+            host_end += 1;
+        }
+        let host = &url[host_start..host_end];
+        let rewritten = match host.to_ascii_lowercase().as_str() {
+            "localhost" | "127.0.0.1" | "[::1]" | "::1" => "host.docker.internal",
+            _ => host,
+        };
+        out.push_str(rewritten);
+        i = host_end;
+    }
+    out
+}
+
 /// Sanitize a string for use as an OCI image tag fragment or
 /// container name.
 pub fn sanitize_tag(s: &str) -> String {
@@ -135,3 +212,49 @@ pub fn sanitize_tag(s: &str) -> String {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_localhost_to_host_internal as r;
+
+    #[test]
+    fn rewrites_localhost_with_port() {
+        assert_eq!(
+            r("http://localhost:3128"),
+            "http://host.docker.internal:3128"
+        );
+    }
+
+    #[test]
+    fn rewrites_127_0_0_1() {
+        assert_eq!(
+            r("http://127.0.0.1:3128/"),
+            "http://host.docker.internal:3128/"
+        );
+    }
+
+    #[test]
+    fn rewrites_userinfo_host() {
+        assert_eq!(
+            r("http://user:pass@localhost:3128"),
+            "http://user:pass@host.docker.internal:3128"
+        );
+    }
+
+    #[test]
+    fn leaves_other_hosts_alone() {
+        assert_eq!(
+            r("http://proxy.corp:8080"),
+            "http://proxy.corp:8080"
+        );
+    }
+
+    #[test]
+    fn handles_no_port() {
+        assert_eq!(
+            r("http://localhost"),
+            "http://host.docker.internal"
+        );
+    }
+}
+
