@@ -48,10 +48,7 @@ pub fn detect() -> GitStatus {
                         .ok()
                         .and_then(|o| {
                             if o.status.success() {
-                                String::from_utf8_lossy(&o.stdout)
-                                    .trim()
-                                    .to_string()
-                                    .into()
+                                String::from_utf8_lossy(&o.stdout).trim().to_string().into()
                             } else {
                                 None
                             }

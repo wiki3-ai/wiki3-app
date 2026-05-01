@@ -58,8 +58,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     // Bundle the 256×256 PNG at compile time and pass it through so
     // the dialog has a properly-sized icon.
     #[cfg(target_os = "macos")]
-    const ABOUT_ICON_PNG: &[u8] =
-        include_bytes!("../icons/128x128@2x.png");
+    const ABOUT_ICON_PNG: &[u8] = include_bytes!("../icons/128x128@2x.png");
     #[cfg(target_os = "macos")]
     let about_icon = tauri::image::Image::from_bytes(ABOUT_ICON_PNG).ok();
     #[cfg(target_os = "macos")]
@@ -161,10 +160,7 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .separator()
         .fullscreen()
         .separator()
-        .item(
-            &MenuItemBuilder::with_id(ID_BRING_ALL_TO_FRONT, "Bring All to Front")
-                .build(app)?,
-        )
+        .item(&MenuItemBuilder::with_id(ID_BRING_ALL_TO_FRONT, "Bring All to Front").build(app)?)
         .build()?;
 
     // Help
