@@ -25,6 +25,11 @@ const expanded = new Set<string>();
 // Per-wiki preview-container status. Null/missing = not running.
 const containerStatuses = new Map<string, wikiApi.RunningSite | null>();
 const containerCtlStatuses = new Map<string, wikiApi.ContainerControlStatus | null>();
+/// Wikis with an in-flight container lifecycle action (Start /
+/// Restart / Rebuild). While set, the dashboard offers a Cancel
+/// button that fires `wiki_container_ctl_cancel` to break stuck
+/// hooks (typically `postCreateCommand`).
+const containerCtlInFlight = new Set<string>();
 
 const content = () => document.getElementById('main-content');
 
@@ -311,7 +316,11 @@ function renderCard(w: Wiki): string {
          <button class="w3-btn w3-btn-sm" data-action="container-stop" data-id="${escapeHtml(w.id)}" ${ctlRunning ? '' : 'disabled'} title="Stop the container">Stop</button>
          <button class="w3-btn w3-btn-sm" data-action="container-restart" data-id="${escapeHtml(w.id)}" ${ctlExists ? '' : 'disabled'} title="Stop then start">Restart</button>
          <button class="w3-btn w3-btn-sm" data-action="container-rebuild" data-id="${escapeHtml(w.id)}" title="Rebuild the image and recreate the container">Rebuild</button>
-         <button class="w3-btn w3-btn-sm w3-btn-danger" data-action="container-remove" data-id="${escapeHtml(w.id)}" ${ctlExists ? '' : 'disabled'} title="Remove the container">Remove</button>
+         <button class="w3-btn w3-btn-sm w3-btn-danger" data-action="container-remove" data-id="${escapeHtml(w.id)}" ${ctlExists ? '' : 'disabled'} title="Remove the container">Remove</button>${
+        containerCtlInFlight.has(w.id)
+          ? `<button class="w3-btn w3-btn-sm w3-btn-danger" data-action="container-cancel" data-id="${escapeHtml(w.id)}" title="Cancel the in-flight lifecycle hook (e.g. a stuck postCreateCommand)">Cancel</button>`
+          : ''
+      }
        </div>`
     : '';
   const pullBtn = hasLocal && hasRemote
@@ -1095,12 +1104,16 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
       }
       case 'container-up':
         try {
+          containerCtlInFlight.add(id);
+          render();
           await ensureDevcontainerSubmitted(id);
           const s = await wikiApi.wikiContainerCtlUp(id);
           containerCtlStatuses.set(id, s);
-          render();
         } catch (err) {
           alert(`Start failed: ${err}`);
+        } finally {
+          containerCtlInFlight.delete(id);
+          render();
         }
         break;
       case 'container-stop':
@@ -1114,23 +1127,44 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         break;
       case 'container-restart':
         try {
+          containerCtlInFlight.add(id);
+          render();
           await ensureDevcontainerSubmitted(id);
           const s = await wikiApi.wikiContainerCtlRestart(id);
           containerCtlStatuses.set(id, s);
-          render();
         } catch (err) {
           alert(`Restart failed: ${err}`);
+        } finally {
+          containerCtlInFlight.delete(id);
+          render();
         }
         break;
       case 'container-rebuild':
         if (!window.confirm('Rebuild the image and recreate the container? Any in-container state is lost.')) return;
         try {
+          containerCtlInFlight.add(id);
+          render();
           await ensureDevcontainerSubmitted(id);
           const s = await wikiApi.wikiContainerCtlRebuild(id);
           containerCtlStatuses.set(id, s);
-          render();
         } catch (err) {
           alert(`Rebuild failed: ${err}`);
+        } finally {
+          containerCtlInFlight.delete(id);
+          render();
+        }
+        break;
+      case 'container-cancel':
+        try {
+          const fired = await wikiApi.wikiContainerCtlCancel(id);
+          if (!fired) {
+            // Nothing was registered — the action probably finished
+            // between render and click. Re-render so the button
+            // disappears.
+            render();
+          }
+        } catch (err) {
+          alert(`Cancel failed: ${err}`);
         }
         break;
       case 'container-remove':

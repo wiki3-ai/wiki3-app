@@ -217,6 +217,34 @@ npm install
 ### Run
 
 ```bash
+export HTTPS_PROXY=http://localhost:3128
+export HTTP_PROXY=http://localhost:3128
+export NO_PROXY=localhost,127.0.0.1,host.docker.internal
+export https_proxy=http://localhost:3128
+export http_proxy=http://localhost:3128
+export no_proxy=localhost,127.0.0.1,host.docker.internal
+npm run tauri:dev
+```
+
+
+```bash
+export HTTPS_PROXY=http://host.docker.internal:3128
+export HTTP_PROXY=http://host.docker.internal:3128
+export NO_PROXY=localhost,127.0.0.1,host.docker.internal
+export https_proxy=http://host.docker.internal:3128
+export http_proxy=http://host.docker.internal:3128
+export no_proxy=localhost,127.0.0.1,host.docker.internal
+npm run tauri:dev
+```
+192.168.64.1
+
+```bash
+export HTTPS_PROXY=http://192.168.64.1:3128
+export HTTP_PROXY=http://192.168.64.1:3128
+export NO_PROXY=localhost,127.0.0.1,host.docker.internal
+export https_proxy=http://192.168.64.1:3128
+export http_proxy=http://192.168.64.1:3128
+export no_proxy=localhost,127.0.0.1,host.docker.internal
 npm run tauri:dev
 ```
 

@@ -179,3 +179,14 @@ pub async fn wiki_container_ctl_remove(
         .map(ContainerStatus::from_core)
         .map_err(|e| e.to_string())
 }
+
+/// Cancel an in-flight lifecycle hook for `wiki_id`. Used to break a
+/// stuck `postCreateCommand` (or similar) without waiting for the
+/// per-wiki orchestrator lock that Stop / Restart would block on.
+#[command]
+pub fn wiki_container_ctl_cancel(
+    orchestrator: State<'_, LifecycleOrchestrator>,
+    wiki_id: String,
+) -> bool {
+    orchestrator.cancel_hook(&wiki_id)
+}

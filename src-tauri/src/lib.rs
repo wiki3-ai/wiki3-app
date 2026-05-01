@@ -320,6 +320,7 @@ pub fn run() {
             wiki::container_controls::wiki_container_ctl_restart,
             wiki::container_controls::wiki_container_ctl_rebuild,
             wiki::container_controls::wiki_container_ctl_remove,
+            wiki::container_controls::wiki_container_ctl_cancel,
             // Devcontainer engine bridge — fs sandbox + parsed-config
             // submission, called by the JS engine bundle running in
             // the WebView (see `src/devcontainer-engine.ts`).

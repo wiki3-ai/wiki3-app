@@ -202,6 +202,10 @@ export function wikiContainerCtlRebuild(wikiId: string): Promise<ContainerContro
 export function wikiContainerCtlRemove(wikiId: string): Promise<ContainerControlStatus> {
   return invoke<ContainerControlStatus>('wiki_container_ctl_remove', { wikiId });
 }
+/** Cancel any in-flight lifecycle hook (e.g. a stuck postCreateCommand). */
+export function wikiContainerCtlCancel(wikiId: string): Promise<boolean> {
+  return invoke<boolean>('wiki_container_ctl_cancel', { wikiId });
+}
 
 /** Open an arbitrary URL in a new in-app window tagged to a wiki. */
 export function openNewWindowForWiki(url: string, wikiId: string): Promise<void> {
