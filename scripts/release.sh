@@ -58,6 +58,21 @@ if [ -z "$DMG" ]; then
   exit 1
 fi
 
+# The notarized .app zip lives next to the .app bundle. Tauri
+# names it `Wiki3.app` (no version), and `build.sh` produces
+# `Wiki3.zip` next to it via `ditto -c -k --keepParent`. Rename
+# on upload so the asset filename is unambiguous on the release
+# page.
+APP_DIR="$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+SRC_ZIP="$APP_DIR/Wiki3.zip"
+if [ ! -f "$SRC_ZIP" ]; then
+  echo "No notarized app zip found at $SRC_ZIP."
+  echo "Run scripts/build.sh first (it produces the zip during notarization)."
+  exit 1
+fi
+ZIP="$APP_DIR/Wiki3_${VERSION}_aarch64.zip"
+cp -f "$SRC_ZIP" "$ZIP"
+
 # Check signing status
 SIGNED="unsigned"
 if CODESIGN_OUT=$(codesign -dvv "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Wiki3.app" 2>&1); then
@@ -68,15 +83,18 @@ fi
 
 DMG_NAME=$(basename "$DMG")
 DMG_SIZE=$(du -h "$DMG" | cut -f1 | xargs)
+ZIP_NAME=$(basename "$ZIP")
+ZIP_SIZE=$(du -h "$ZIP" | cut -f1 | xargs)
 
 echo "Release: $TAG"
-echo "Asset:   $DMG_NAME ($DMG_SIZE, $SIGNED)"
+echo "Assets:  $DMG_NAME ($DMG_SIZE, $SIGNED)"
+echo "         $ZIP_NAME ($ZIP_SIZE, $SIGNED)"
 echo ""
 
 # Check if release already exists
 if gh release view "$TAG" &>/dev/null; then
-  echo "Release $TAG already exists. Uploading asset..."
-  gh release upload "$TAG" "$DMG" --clobber
+  echo "Release $TAG already exists. Uploading assets..."
+  gh release upload "$TAG" "$DMG" "$ZIP" --clobber
 else
   TITLE="Wiki3 ${TAG}"
   NOTES="macOS (Apple Silicon, Sequoia+) — ${SIGNED}"
@@ -86,7 +104,7 @@ else
     --title "$TITLE" \
     --notes "$NOTES" \
     $DRAFT \
-    "$DMG"
+    "$DMG" "$ZIP"
 fi
 
 echo ""
