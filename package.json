@@ -1,6 +1,6 @@
 {
   "name": "wiki3-app",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Desktop app for running Wiki3.ai sites",
   "private": true,
   "scripts": {
@@ -11,6 +11,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:arm64": "tauri build --target aarch64-apple-darwin",
+    "version:bump": "./scripts/bump-version.sh",
     "notarize": "./scripts/notarize.sh",
     "release": "./scripts/release.sh",
     "release:draft": "./scripts/release.sh --draft",
