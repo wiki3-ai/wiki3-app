@@ -23,15 +23,38 @@ for arg in "$@"; do
 done
 
 # Default tag from package.json version
+VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
 if [ -z "$TAG" ]; then
-  VERSION=$(python3 -c "import json; print(json.load(open('package.json'))['version'])")
   TAG="v${VERSION}"
 fi
 
-# Find DMG
-DMG=$(find src-tauri/target -name '*.dmg' -newer src-tauri/Cargo.toml 2>/dev/null | head -1)
+# Sanity-check that all version sources agree, otherwise we'd ship
+# a tag that doesn't match the artifact metadata.
+CARGO_VERSION=$(awk -F'"' '/^version *= *"/ {print $2; exit}' src-tauri/Cargo.toml)
+TAURI_VERSION=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
+if [ "$VERSION" != "$CARGO_VERSION" ] || [ "$VERSION" != "$TAURI_VERSION" ]; then
+  echo "Version mismatch:"
+  echo "  package.json:      $VERSION"
+  echo "  src-tauri/Cargo.toml: $CARGO_VERSION"
+  echo "  tauri.conf.json:   $TAURI_VERSION"
+  echo "Bump them all to the same value before releasing."
+  exit 1
+fi
+
+# Find DMG matching this version. The bundle filename embeds the
+# version Tauri saw at build time (`Wiki3_<ver>_aarch64.dmg`), so
+# requiring an exact match catches the "I bumped versions but didn't
+# rebuild" footgun.
+DMG=$(find src-tauri/target -name "Wiki3_${VERSION}_*.dmg" 2>/dev/null | head -1)
 if [ -z "$DMG" ]; then
-  echo "No DMG found. Run 'npm run tauri:build:arm64' first."
+  echo "No DMG found for version ${VERSION}."
+  echo "Looked for: src-tauri/target/**/Wiki3_${VERSION}_*.dmg"
+  STALE=$(find src-tauri/target -name 'Wiki3_*.dmg' 2>/dev/null | head -3)
+  if [ -n "$STALE" ]; then
+    echo "Other DMGs present (stale builds):"
+    echo "$STALE" | sed 's/^/  /'
+  fi
+  echo "Run a fresh notarized build first."
   exit 1
 fi
 
