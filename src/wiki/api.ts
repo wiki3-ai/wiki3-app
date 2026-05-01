@@ -207,6 +207,22 @@ export function wikiContainerCtlCancel(wikiId: string): Promise<boolean> {
   return invoke<boolean>('wiki_container_ctl_cancel', { wikiId });
 }
 
+// ── Per-wiki port monitoring ─────────────────────────────────────────
+
+export interface PortRow {
+  external: number;
+  internal: number;
+  label: string | null;
+  serving: boolean;
+  url: string;
+  key: string;
+}
+
+/** List forwarded ports for a wiki, paired with a quick TCP probe. */
+export function wikiContainerPorts(wikiId: string): Promise<PortRow[]> {
+  return invoke<PortRow[]>('wiki_container_ports', { wikiId });
+}
+
 /** Open an arbitrary URL in a new in-app window tagged to a wiki. */
 export function openNewWindowForWiki(url: string, wikiId: string): Promise<void> {
   return invoke<void>('open_new_window_for_wiki', { url, wikiId });

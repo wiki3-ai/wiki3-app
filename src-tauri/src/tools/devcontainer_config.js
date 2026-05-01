@@ -125,6 +125,17 @@ function resolveConfig(jsonStr) {
     out.forwardPorts = raw.forwardPorts;
   }
 
+  // --- portsAttributes -----------------------------------------------------
+  // Pass through verbatim. Keyed by port number as a string ("3000") with
+  // values like { label, onAutoForward, protocol, ... }.
+  if (
+    raw.portsAttributes &&
+    typeof raw.portsAttributes === 'object' &&
+    !Array.isArray(raw.portsAttributes)
+  ) {
+    out.portsAttributes = raw.portsAttributes;
+  }
+
   // --- lifecycle commands --------------------------------------------------
   if (raw.postCreateCommand !== undefined) {
     out.postCreateCommand = raw.postCreateCommand;

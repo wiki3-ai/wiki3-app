@@ -48,6 +48,11 @@ pub struct DevcontainerConfig {
     )]
     pub forward_ports: Vec<serde_json::Value>,
 
+    /// Per-port attributes (label, onAutoForward, protocol, etc.) keyed
+    /// by the port number as a string. Carried through verbatim.
+    #[serde(rename = "portsAttributes", skip_serializing_if = "Option::is_none")]
+    pub ports_attributes: Option<serde_json::Value>,
+
     /// Command to run once after the container is created.
     #[serde(rename = "postCreateCommand", skip_serializing_if = "Option::is_none")]
     pub post_create_command: Option<serde_json::Value>,

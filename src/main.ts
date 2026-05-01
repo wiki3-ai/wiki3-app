@@ -26,6 +26,8 @@ const expanded = new Set<string>();
 // Per-wiki preview-container status. Null/missing = not running.
 const containerStatuses = new Map<string, wikiApi.RunningSite | null>();
 const containerCtlStatuses = new Map<string, wikiApi.ContainerControlStatus | null>();
+// Per-wiki forwarded-port snapshot.
+const containerPorts = new Map<string, wikiApi.PortRow[]>();
 /// Wikis with an in-flight container lifecycle action (Start /
 /// Restart / Rebuild). While set, the dashboard offers a Cancel
 /// button that fires `wiki_container_ctl_cancel` to break stuck
@@ -310,6 +312,35 @@ function renderCard(w: Wiki): string {
   const ctlState = ctlStatus?.state ?? 'unknown';
   const ctlRunning = ctlState === 'running';
   const ctlExists = ctlRunning || ctlState === 'stopped' || ctlState === 'created';
+
+  // Forwarded-port monitor — sits above the container controls so the
+  // user can see at a glance which services are reachable.
+  const ports = containerPorts.get(w.id) ?? [];
+  const portsBlock = hasLocal && ports.length > 0
+    ? `<div class="w3-ws-ports" style="margin:8px 0;border:1px solid #e0e0e0;border-radius:4px;padding:6px 8px;font-size:13px;">
+         <div style="font-weight:600;margin-bottom:4px;color:#555;">Ports</div>
+         ${ports
+           .map((p) => {
+             const dotColor = p.serving ? '#4caf50' : '#bbb';
+             const dotTitle = p.serving ? 'Serving' : 'Not reachable';
+             const labelTxt = p.label ?? `Port ${p.external}`;
+             const portCol = p.external === p.internal
+               ? `${p.external}`
+               : `${p.external} → ${p.internal}`;
+             const link = p.serving
+               ? `<a href="#" draggable="false" data-open-url="${escapeHtml(p.url)}" data-link-target="${escapeHtml(p.key)}" class="w3-ws-url" title="Open ${escapeHtml(p.url)}">${escapeHtml(p.url)}</a>`
+               : `<span style="color:#999;">${escapeHtml(p.url)}</span>`;
+             return `<div class="w3-ws-port-row" style="display:flex;align-items:center;gap:8px;padding:2px 0;">
+               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;" title="${dotTitle}"></span>
+               <span style="flex:0 0 auto;font-weight:500;">${escapeHtml(labelTxt)}</span>
+               <span style="flex:0 0 auto;color:#666;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${portCol}</span>
+               <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${link}</span>
+             </div>`;
+           })
+           .join('')}
+       </div>`
+    : '';
+
   const containerRow = hasLocal
     ? `<div class="w3-ws-actions w3-ws-container-row">
          <span class="w3-ws-container-label" title="Devcontainer state">Container: <strong>${escapeHtml(ctlState)}</strong></span>
@@ -328,6 +359,13 @@ function renderCard(w: Wiki): string {
     ? `<button class="w3-btn w3-btn-sm" data-action="pull-wiki" data-id="${escapeHtml(w.id)}" title="git pull origin">Pull</button>`
     : '';
 
+  // Inline remote URL link, displayed alongside the git buttons.
+  const remoteLink = hasRemote
+    ? `<a href="#" draggable="false" data-action="open-remote" data-id="${escapeHtml(
+        w.id,
+      )}" class="w3-ws-url" style="margin-left:4px;align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;" title="${escapeHtml(w.remote!.url)}">${escapeHtml(w.remote!.url)}</a>`
+    : '';
+
   const pocCheckbox = hasLocal && hasRemote
     ? `<label class="w3-ws-poc" title="When checked, a successful Commit also pushes.">
          <input type="checkbox" data-action="toggle-publish-on-commit" data-id="${escapeHtml(w.id)}" ${w.publish_on_commit ? 'checked' : ''} />
@@ -335,10 +373,12 @@ function renderCard(w: Wiki): string {
        </label>`
     : '';
   const autostartCheckbox = hasLocal
-    ? `<label class="w3-ws-poc" title="When checked, the preview container starts automatically when the app launches.">
-         <input type="checkbox" data-action="toggle-autostart-container" data-id="${escapeHtml(w.id)}" ${w.autostart_container ? 'checked' : ''} />
-         Autostart Container
-       </label>`
+    ? `<div class="w3-ws-poc-row">
+         <label class="w3-ws-poc" title="When checked, the preview container starts automatically when the app launches.">
+           <input type="checkbox" data-action="toggle-autostart-container" data-id="${escapeHtml(w.id)}" ${w.autostart_container ? 'checked' : ''} />
+           Autostart Container
+         </label>
+       </div>`
     : '';
 
   const closeAllBtn =
@@ -370,13 +410,6 @@ function renderCard(w: Wiki): string {
       )}" class="w3-ws-path-link">${escapeHtml(w.local_path!)}</a></div>`,
     );
   }
-  if (hasRemote) {
-    links.push(
-      `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Remote:</span> <a href="#" draggable="false" data-action="open-remote" data-id="${escapeHtml(
-        w.id,
-      )}" class="w3-ws-url">${escapeHtml(w.remote!.url)}</a></div>`,
-    );
-  }
   if (hasSite) {
     links.push(
       `<div class="w3-ws-link-row"><span class="w3-ws-link-label">Site:</span> <a href="#" draggable="false" data-action="open-site" data-id="${escapeHtml(
@@ -398,19 +431,22 @@ function renderCard(w: Wiki): string {
       <div style="display:flex;flex-direction:column;gap:4px;margin:8px 0;">
         ${links.join('')}
       </div>
+      ${portsBlock}
       ${containerRow}
+      ${autostartCheckbox}
       <div class="w3-ws-actions">
         ${cloneBtn}
         ${commitBtn}
         ${pullBtn}
         ${remoteBtn}
+        ${remoteLink}
         ${revealBtn}
         ${windowsToggle}
         ${closeAllBtn}
         ${reopenAllBtn}
         <button class="w3-btn w3-btn-sm w3-btn-danger" data-action="remove-wiki" data-id="${escapeHtml(w.id)}" title="Remove from dashboard">Remove</button>
       </div>
-      ${pocCheckbox || autostartCheckbox ? `<div class="w3-ws-poc-row">${pocCheckbox}${autostartCheckbox}</div>` : ''}
+      ${pocCheckbox ? `<div class="w3-ws-poc-row">${pocCheckbox}</div>` : ''}
       ${windowsList}
     </div>`;
 }
@@ -468,6 +504,12 @@ async function refresh(): Promise<void> {
           containerCtlStatuses.set(w.id, c);
         } catch {
           /* keep previous status */
+        }
+        try {
+          const ports = await wikiApi.wikiContainerPorts(w.id);
+          containerPorts.set(w.id, ports);
+        } catch {
+          /* keep previous ports */
         }
       }),
   );
@@ -1261,6 +1303,17 @@ async function init(): Promise<void> {
 
   // Delegated click handling on the page.
   document.addEventListener('click', (e) => {
+    const openUrlEl = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-open-url]');
+    if (openUrlEl) {
+      e.preventDefault();
+      const url = openUrlEl.getAttribute('data-open-url') || '';
+      if (url) {
+        void invoke('open_url', { url }).catch((err) => {
+          console.error('open_url failed:', err);
+        });
+      }
+      return;
+    }
     const target = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-action]');
     if (target) {
       void handleAction(target, e);
