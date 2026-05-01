@@ -54,29 +54,29 @@ function logsBody(): HTMLElement | null {
 function setLogsVisible(visible: boolean): void {
   const panel = logsPanel();
   if (!panel) return;
-  panel.style.display = visible ? 'flex' : 'none';
+  panel.classList.toggle('open', visible);
   // Give the content area bottom padding so cards aren't hidden.
   const main = content();
   if (main) main.style.paddingBottom = visible ? '248px' : '';
 }
 
 function logsVisible(): boolean {
-  return logsPanel()?.style.display === 'flex';
+  return logsPanel()?.classList.contains('open') ?? false;
 }
 
 function appendLog(evt: LogLine): void {
   const body = logsBody();
   if (!body) return;
   const wiki = evt.wiki_id ? (wikis.find((w) => w.id === evt.wiki_id)?.name ?? evt.wiki_id) : '-';
-  const color =
+  const cls =
     evt.level === 'stderr' || evt.level === 'error'
-      ? '#ff8080'
+      ? 'w3-log-err'
       : evt.level === 'info'
-        ? '#7cc7ff'
-        : '#e6e6e6';
+        ? 'w3-log-info'
+        : 'w3-log-out';
   const time = new Date(evt.ts).toLocaleTimeString();
   const row = document.createElement('div');
-  row.style.color = color;
+  row.className = cls;
   row.textContent = `[${time}] ${wiki} · ${evt.source}: ${evt.line}`;
   body.appendChild(row);
   // Cap the number of rendered rows to avoid DOM growth.

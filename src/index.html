@@ -293,6 +293,50 @@
       .w3-ws-link-label { color: #888; font-weight: 600; min-width: 56px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; }
       .w3-ws-path-link { font-family: monospace; color: #555; text-decoration: none; word-break: break-all; }
       .w3-ws-path-link:hover { text-decoration: underline; }
+
+      /* ── Container logs panel ──
+         Defined as classes (not inline `style="…"`) because Tauri's
+         production CSP rewrite injects style hashes that effectively
+         negate `'unsafe-inline'` for inline style attributes; classes
+         cascade from this `<style>` block which is hashed by the
+         build and so always applies. */
+      .w3-logs-panel {
+        display: none;
+        flex-direction: column;
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 240px;
+        background: #111;
+        color: #e6e6e6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 12px;
+        border-top: 1px solid #333;
+        z-index: 100;
+      }
+      .w3-logs-panel.open { display: flex; }
+      .w3-logs-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 4px 8px;
+        background: #1b1b1b;
+        border-bottom: 1px solid #333;
+      }
+      .w3-logs-title { font-weight: 600; }
+      .w3-logs-controls { display: flex; gap: 6px; }
+      .w3-logs-controls label { font-weight: normal; color: #aaa; }
+      .w3-logs-body {
+        flex: 1;
+        overflow: auto;
+        padding: 4px 8px;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .w3-log-out  { color: #e6e6e6; }
+      .w3-log-info { color: #7cc7ff; }
+      .w3-log-err  { color: #ff8080; }
     </style>
   </head>
   <body>
@@ -309,18 +353,18 @@
     <div class="w3-main" id="main-content">
       <div class="w3-loading"><div class="spinner"></div>Loading wikis…</div>
     </div>
-    <div id="w3-logs-panel" style="display:none;flex-direction:column;position:fixed;left:0;right:0;bottom:0;height:240px;background:#111;color:#e6e6e6;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;border-top:1px solid #333;z-index:100;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 8px;background:#1b1b1b;border-bottom:1px solid #333;">
-        <div style="font-weight:600;">Container Logs</div>
-        <div style="display:flex;gap:6px;">
-          <label style="font-weight:normal;color:#aaa;">
+    <div id="w3-logs-panel" class="w3-logs-panel">
+      <div class="w3-logs-header">
+        <div class="w3-logs-title">Container Logs</div>
+        <div class="w3-logs-controls">
+          <label>
             <input type="checkbox" id="w3-logs-autoscroll" checked /> autoscroll
           </label>
           <button class="w3-btn w3-btn-sm" id="w3-logs-clear">Clear</button>
           <button class="w3-btn w3-btn-sm" id="w3-logs-close">Close</button>
         </div>
       </div>
-      <div id="w3-logs-body" style="flex:1;overflow:auto;padding:4px 8px;white-space:pre-wrap;word-break:break-all;"></div>
+      <div id="w3-logs-body" class="w3-logs-body"></div>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>
