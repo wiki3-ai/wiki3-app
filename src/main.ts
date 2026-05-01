@@ -317,11 +317,11 @@ function renderCard(w: Wiki): string {
   // user can see at a glance which services are reachable.
   const ports = containerPorts.get(w.id) ?? [];
   const portsBlock = hasLocal && ports.length > 0
-    ? `<div class="w3-ws-ports" style="margin:8px 0;border:1px solid #e0e0e0;border-radius:4px;padding:6px 8px;font-size:13px;">
-         <div style="font-weight:600;margin-bottom:4px;color:#555;">Ports</div>
+    ? `<div class="w3-ws-ports">
+         <div class="w3-ws-ports-title">Ports</div>
          ${ports
            .map((p) => {
-             const dotColor = p.serving ? '#4caf50' : '#bbb';
+             const dotClass = p.serving ? 'w3-ws-port-dot serving' : 'w3-ws-port-dot';
              const dotTitle = p.serving ? 'Serving' : 'Not reachable';
              const labelTxt = p.label ?? `Port ${p.external}`;
              const portCol = p.external === p.internal
@@ -329,12 +329,12 @@ function renderCard(w: Wiki): string {
                : `${p.external} → ${p.internal}`;
              const link = p.serving
                ? `<a href="#" draggable="false" data-open-url="${escapeHtml(p.url)}" data-link-target="${escapeHtml(p.key)}" class="w3-ws-url" title="Open ${escapeHtml(p.url)}">${escapeHtml(p.url)}</a>`
-               : `<span style="color:#999;">${escapeHtml(p.url)}</span>`;
-             return `<div class="w3-ws-port-row" style="display:flex;align-items:center;gap:8px;padding:2px 0;">
-               <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotColor};flex-shrink:0;" title="${dotTitle}"></span>
-               <span style="flex:0 0 auto;font-weight:500;">${escapeHtml(labelTxt)}</span>
-               <span style="flex:0 0 auto;color:#666;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;">${portCol}</span>
-               <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${link}</span>
+               : `<span class="w3-ws-url-muted">${escapeHtml(p.url)}</span>`;
+             return `<div class="w3-ws-port-row">
+               <span class="${dotClass}" title="${dotTitle}"></span>
+               <span class="w3-ws-port-label">${escapeHtml(labelTxt)}</span>
+               <span class="w3-ws-port-num">${portCol}</span>
+               <span class="w3-ws-port-link">${link}</span>
              </div>`;
            })
            .join('')}
@@ -363,7 +363,7 @@ function renderCard(w: Wiki): string {
   const remoteLink = hasRemote
     ? `<a href="#" draggable="false" data-action="open-remote" data-id="${escapeHtml(
         w.id,
-      )}" class="w3-ws-url" style="margin-left:4px;align-self:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;" title="${escapeHtml(w.remote!.url)}">${escapeHtml(w.remote!.url)}</a>`
+      )}" class="w3-ws-url w3-ws-remote-link" title="${escapeHtml(w.remote!.url)}">${escapeHtml(w.remote!.url)}</a>`
     : '';
 
   const pocCheckbox = hasLocal && hasRemote
