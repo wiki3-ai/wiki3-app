@@ -72,6 +72,13 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Probe for `git` upfront. Wiki3 shells out to git for
+            // clone/status/commit/push; without the Xcode Command
+            // Line Tools the user would hit a confusing
+            // `No such file or directory` partway through an action.
+            // Surface it as a native modal with a one-click Install.
+            check_git_or_prompt(app.handle());
+
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -344,6 +351,8 @@ pub fn run() {
             // Managed tools: Apple Container is the only external
             // dependency, and we only detect it (never install it).
             tools::commands::detect_apple_container,
+            tools::commands::detect_git,
+            open_url,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -425,4 +434,56 @@ pub fn run() {
                 });
             }
         });
+}
+
+/// Probe for `git`. If absent, show a native modal offering one-click
+/// Install (runs `xcode-select --install`) or Quit. Blocks setup
+/// until the user picks; on Install we exit so the user can relaunch
+/// once the system installer finishes.
+fn check_git_or_prompt(app: &tauri::AppHandle) {
+    if crate::tools::git_probe::detect().installed {
+        return;
+    }
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let install = app
+        .dialog()
+        .message(
+            "Wiki3 needs `git`, which is part of the macOS Command Line \
+             Tools.\n\n\
+             Click Install to launch Apple's installer. After it \
+             finishes, relaunch Wiki3.",
+        )
+        .title("Git Required")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Install".into(),
+            "Quit".into(),
+        ))
+        .blocking_show();
+    if install {
+        // `xcode-select --install` returns immediately and pops the
+        // system installer GUI. Don't wait — just spawn and exit.
+        let _ = std::process::Command::new("xcode-select")
+            .arg("--install")
+            .spawn();
+    }
+    // Either way, quit. The user must relaunch after install.
+    std::process::exit(0);
+}
+
+/// Open a URL in the user's default browser. Used by the in-app
+/// tools dialog so the "apple/container" link is actually clickable
+/// from within the WebView (where `<a target="_blank">` is a no-op).
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    // Validate scheme — accept http(s) only to avoid being a generic
+    // shell-out vector.
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("only http(s) URLs are allowed".into());
+    }
+    std::process::Command::new("/usr/bin/open")
+        .arg(&url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }

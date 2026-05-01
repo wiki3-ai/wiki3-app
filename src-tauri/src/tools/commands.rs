@@ -38,3 +38,13 @@ pub fn detect_apple_container(
     }
     Ok(status.into())
 }
+
+/// Probe for `git`. Wiki3 shells out to git for clone/status/commit;
+/// on a fresh Mac without Xcode Command Line Tools the spawn fails
+/// mid-operation with a confusing `No such file or directory`. The
+/// frontend calls this once at startup so we can show a one-time
+/// friendly nudge to install the CLT.
+#[command]
+pub fn detect_git() -> super::git_probe::GitStatus {
+    super::git_probe::detect()
+}

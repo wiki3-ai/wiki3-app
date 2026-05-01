@@ -488,7 +488,7 @@ mod tests {
 
         // Only mention c; a and b should remain at the end in their
         // original relative order (which is [b, a]).
-        mgr.reorder(&[c.clone()]).unwrap();
+        mgr.reorder(std::slice::from_ref(&c)).unwrap();
         let ids: Vec<_> = mgr.list().unwrap().into_iter().map(|w| w.id).collect();
         assert_eq!(ids, vec![c, b, a]);
     }

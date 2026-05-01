@@ -357,7 +357,7 @@ async fn build_site_in_devcontainer(
     let cmd_str = cfg
         .post_create_command
         .as_ref()
-        .and_then(|v| value_to_shell_command(v))
+        .and_then(value_to_shell_command)
         .unwrap_or_else(|| "jupyter lite build".to_string());
 
     let mount_arg = format!("{}:/workspaces/{workspace_name}", workspace);
@@ -428,7 +428,7 @@ pub(crate) fn value_to_shell_command(v: &serde_json::Value) -> Option<String> {
         serde_json::Value::Array(items) => {
             let parts: Vec<String> = items
                 .iter()
-                .filter_map(|i| i.as_str().map(|s| shell_quote(s)))
+                .filter_map(|i| i.as_str().map(shell_quote))
                 .collect();
             if parts.is_empty() {
                 None

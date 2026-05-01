@@ -222,6 +222,7 @@ async fn wait_for_port(port: u16) -> Result<(), String> {
 /// stdout/stderr stream into the UI via `wiki:log` events. Errors
 /// surface the full `container run` stderr so misconfigured
 /// devcontainers give a clear message.
+#[allow(clippy::too_many_arguments)]
 async fn run_detached(
     app: &tauri::AppHandle,
     wiki_id: &str,

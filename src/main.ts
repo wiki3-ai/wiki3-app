@@ -6,6 +6,7 @@
  */
 
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 
 import * as wikiApi from './wiki/api';
 import { computeReorder } from './wiki/dashboard-logic';
@@ -844,6 +845,25 @@ async function openToolsDialog(): Promise<void> {
   };
 
   body.addEventListener('click', async (e) => {
+    // Clickable external links: <a target="_blank"> doesn't work in
+    // the Tauri WebView, so we route URLs through the backend's
+    // `open_url` command (which calls `/usr/bin/open`).
+    const link = (e.target as HTMLElement | null)?.closest<HTMLElement>(
+      '[data-open-url]',
+    );
+    if (link) {
+      e.preventDefault();
+      const url = link.getAttribute('data-open-url') || '';
+      if (url) {
+        try {
+          await invoke('open_url', { url });
+        } catch (err) {
+          console.warn('open_url failed:', err);
+        }
+      }
+      return;
+    }
+
     const btn = (e.target as HTMLElement | null)?.closest<HTMLButtonElement>(
       '[data-tools-row-act]',
     );
@@ -909,7 +929,7 @@ function renderAppleContainerRow(ac: AppleContainerRow): string {
     ? `<span style="color:#2e7d32;">Installed</span>${
         ac.path ? ` — <code style="font-size:11px;">${escapeHtml(ac.path)}</code>` : ''
       }`
-    : `<span style="color:#e65100;">Not installed</span> — needed for sandboxed builds. Install from <a href="https://github.com/apple/container" target="_blank" rel="noopener">apple/container</a>.`;
+    : `<span style="color:#e65100;">Not installed</span> — needed for sandboxed builds. Install from <a href="https://github.com/apple/container" data-open-url="https://github.com/apple/container" style="cursor:pointer;color:#1976d2;text-decoration:underline;">apple/container</a>.`;
   return `
     <div class="w3-workspace-card" style="padding:12px;margin-bottom:12px;">
       <div class="w3-ws-header" style="margin-bottom:4px;">

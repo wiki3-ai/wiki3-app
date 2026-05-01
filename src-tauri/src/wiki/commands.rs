@@ -400,30 +400,18 @@ mod tests {
     fn is_empty_dir_cases() {
         let dir = tempdir().unwrap();
         // Empty directory
-        assert_eq!(
-            is_empty_dir(dir.path().to_string_lossy().to_string()).unwrap(),
-            true
-        );
+        assert!(is_empty_dir(dir.path().to_string_lossy().to_string()).unwrap());
 
         // Non-empty directory
         std::fs::write(dir.path().join("a"), b"hi").unwrap();
-        assert_eq!(
-            is_empty_dir(dir.path().to_string_lossy().to_string()).unwrap(),
-            false
-        );
+        assert!(!is_empty_dir(dir.path().to_string_lossy().to_string()).unwrap());
 
         // Non-existent path
-        assert_eq!(
-            is_empty_dir(format!("{}/does-not-exist", dir.path().display())).unwrap(),
-            false
-        );
+        assert!(!is_empty_dir(format!("{}/does-not-exist", dir.path().display())).unwrap());
 
         // A file, not a directory
         let f = dir.path().join("a");
-        assert_eq!(
-            is_empty_dir(f.to_string_lossy().to_string()).unwrap(),
-            false
-        );
+        assert!(!is_empty_dir(f.to_string_lossy().to_string()).unwrap());
     }
 
     /// End-to-end: clone from a local bare repo into an empty directory

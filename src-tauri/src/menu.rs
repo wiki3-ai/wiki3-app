@@ -21,6 +21,9 @@ pub const ID_CLOSE_ALL_WIKI_WINDOWS: &str = "wiki3.close_all_wiki_windows";
 pub const ID_REOPEN_ALL_WIKI_WINDOWS: &str = "wiki3.reopen_all_wiki_windows";
 pub const ID_HELP_README: &str = "wiki3.help_readme";
 pub const ID_QUIT: &str = "wiki3.quit";
+pub const ID_RELOAD: &str = "wiki3.reload";
+pub const ID_FORCE_RELOAD: &str = "wiki3.force_reload";
+pub const ID_BRING_ALL_TO_FRONT: &str = "wiki3.bring_all_to_front";
 
 /// Build the application menu.
 pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
@@ -138,14 +141,30 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         .separator()
         .item(&close_all)
         .item(&reopen_all)
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(ID_RELOAD, "Reload")
+                .accelerator("CmdOrCtrl+R")
+                .build(app)?,
+        )
+        .item(
+            &MenuItemBuilder::with_id(ID_FORCE_RELOAD, "Force Reload")
+                .accelerator("CmdOrCtrl+Shift+R")
+                .build(app)?,
+        )
         .build()?;
 
-    // Window
+    // Window — standard macOS items.
     let window_menu = SubmenuBuilder::new(app, "Window")
         .minimize()
         .maximize()
         .separator()
         .fullscreen()
+        .separator()
+        .item(
+            &MenuItemBuilder::with_id(ID_BRING_ALL_TO_FRONT, "Bring All to Front")
+                .build(app)?,
+        )
         .build()?;
 
     // Help
@@ -192,6 +211,30 @@ pub fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
             // shutdown hook in lib.rs runs and we can stop preview
             // containers before the process actually exits.
             app.exit(0);
+        }
+        ID_RELOAD | ID_FORCE_RELOAD => {
+            // Reload the focused window (or the dashboard as a
+            // fallback). Tauri's `reload` ignores HTTP/asset caches
+            // already, so Cmd-R and Cmd-Shift-R behave identically;
+            // we expose both because users expect Cmd-Shift-R to
+            // exist.
+            let win = app
+                .webview_windows()
+                .into_values()
+                .find(|w| w.is_focused().unwrap_or(false))
+                .or_else(|| app.get_webview_window(crate::commands::DASHBOARD_LABEL));
+            if let Some(w) = win {
+                let _ = w.eval("window.location.reload()");
+            }
+        }
+        ID_BRING_ALL_TO_FRONT => {
+            // Show every Wiki3 window and focus them. Mirrors
+            // AppKit's standard Window → Bring All to Front.
+            for (_, w) in app.webview_windows() {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
         }
         ID_NEW_FROM_TEMPLATE
         | ID_CLONE_WIKI

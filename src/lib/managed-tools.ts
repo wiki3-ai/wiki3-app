@@ -24,6 +24,12 @@ export interface AppleContainerStatus {
   path: string | null;
 }
 
+export interface GitStatus {
+  installed: boolean;
+  path: string | null;
+  version: string | null;
+}
+
 export interface CacheInfo {
   path: string;
   exists: boolean;
@@ -52,6 +58,16 @@ export function toolsBundledDenoPath(): Promise<string | null> {
  */
 export function detectAppleContainer(): Promise<AppleContainerStatus> {
   return invoke<AppleContainerStatus>('detect_apple_container');
+}
+
+/**
+ * Probe for `git`. Wiki3 shells out to git for clone/status/commit/push;
+ * on a fresh Mac without Xcode Command Line Tools, that fails partway
+ * through with a confusing `No such file or directory`. Call this once
+ * at startup and warn the user if `installed` is false.
+ */
+export function detectGit(): Promise<GitStatus> {
+  return invoke<GitStatus>('detect_git');
 }
 
 /**
