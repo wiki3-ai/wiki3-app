@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::{command, State};
 
-use devcontainer_core::{LifecycleOrchestrator, ParsedDevContainer};
+use devcontainer_core::{LifecycleOrchestrator, ParsedDevContainer, ProxyStatsSnapshot};
 
 use crate::wiki::commands::WikiState;
 
@@ -158,4 +158,14 @@ pub async fn submit_parsed_devcontainer(
     orchestrator.set_parsed_config(&workspace_id, parsed);
     orchestrator.record_host_workspace(&workspace_id, &path);
     Ok(())
+}
+
+/// Snapshot of the internal caching proxy. Returns `None` when the
+/// proxy is disabled or its bind failed; the UI should render that
+/// as "proxy: off".
+#[command]
+pub fn wiki_proxy_stats(
+    orchestrator: State<'_, LifecycleOrchestrator>,
+) -> Option<ProxyStatsSnapshot> {
+    orchestrator.proxy().stats()
 }

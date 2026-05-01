@@ -105,7 +105,17 @@ pub fn run() {
             // (start/stop/restart/rebuild/remove). Lives alongside the
             // legacy `LocalSiteManager` for now — callers can pick.
             app.manage(devcontainer_core::RuntimeRegistry::with_default_backends());
-            app.manage(devcontainer_core::LifecycleOrchestrator::new());
+            // Lazy-started internal caching proxy. We bind on a port
+            // distinct from Devcontainers.app (31280) so both can run
+            // concurrently and each see their own per-host stats.
+            // Bind failure is cached as "disabled" — containers still
+            // launch, they just don't get an auto-injected proxy.
+            let proxy_bind: std::net::SocketAddr = "192.168.64.1:31281"
+                .parse()
+                .expect("static proxy bind addr is well-formed");
+            app.manage(devcontainer_core::LifecycleOrchestrator::with_proxy(
+                devcontainer_core::ProxyManager::with_bind(proxy_bind),
+            ));
 
             // Autostart per-wiki preview containers for any wikis with
             // `autostart_container = true` and a still-existing local
@@ -330,6 +340,7 @@ pub fn run() {
             commands_devcontainer::fs_read_dir,
             commands_devcontainer::fs_mkdirp,
             commands_devcontainer::submit_parsed_devcontainer,
+            commands_devcontainer::wiki_proxy_stats,
             // Managed tools: Apple Container is the only external
             // dependency, and we only detect it (never install it).
             tools::commands::detect_apple_container,

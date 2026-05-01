@@ -40,11 +40,33 @@ pub fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let quit_item = MenuItemBuilder::with_id(ID_QUIT, format!("Quit {app_name}"))
         .accelerator("CmdOrCtrl+Q")
         .build(app)?;
+    // Repo URL surfaced in the About box. We deliberately do NOT
+    // pass it via `AboutMetadata.credits`: muda passes that string
+    // to AppKit as a plain (non-link) NSAttributedString, so the URL
+    // would render as dead text. Instead we ship `Credits.html` in
+    // the app bundle's Resources directory; macOS's standard About
+    // panel auto-loads that file and renders its <a href> as a
+    // clickable link. (`website` is ignored on macOS by AppKit, but
+    // we still set it for Windows/Linux clickable-link support.)
+    #[cfg(target_os = "macos")]
+    const REPO_URL: &str = "https://github.com/wiki3-ai/wiki3-app";
+    // The default window icon Tauri loads is 32×32 — far too small
+    // for the macOS About panel (which renders the icon at ~96pt).
+    // Bundle the 256×256 PNG at compile time and pass it through so
+    // the dialog has a properly-sized icon.
+    #[cfg(target_os = "macos")]
+    const ABOUT_ICON_PNG: &[u8] =
+        include_bytes!("../icons/128x128@2x.png");
+    #[cfg(target_os = "macos")]
+    let about_icon = tauri::image::Image::from_bytes(ABOUT_ICON_PNG).ok();
     #[cfg(target_os = "macos")]
     let app_submenu = SubmenuBuilder::new(app, app_name)
         .about(Some(AboutMetadata {
             name: Some(app_name.to_string()),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            icon: about_icon,
+            website: Some(REPO_URL.to_string()),
+            website_label: Some("github.com/wiki3-ai/wiki3-app".to_string()),
             ..Default::default()
         }))
         .separator()
