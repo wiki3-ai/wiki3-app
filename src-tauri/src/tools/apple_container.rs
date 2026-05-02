@@ -6,6 +6,7 @@
 //! it can be reused by other Tauri apps.
 
 pub use devcontainer_core::container::apple_containers::{
-    detect, ensure_service_running, is_service_running, list_running_container_names,
-    probe_with_dirs, stop_container_by_name as stop_container, stop_service, AppleContainerStatus,
+    detect, ensure_service_running, inspect_container_ipv4, is_service_running,
+    list_running_container_names, probe_with_dirs, stop_container_by_name as stop_container,
+    stop_service, AppleContainerStatus,
 };
