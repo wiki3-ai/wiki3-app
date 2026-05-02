@@ -1095,14 +1095,12 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         const target = await wikiApi.pickCloneTarget(base, name);
         if (!target) return;
         await wikiApi.cloneWiki(w.remote.url, target);
-        // If the old entry was just a remote pointer, fill in its local_path.
-        if (!w.local_path) {
-          try {
-            await wikiApi.updateWiki(id, { local_path: target });
-          } catch {
-            /* a new entry was already added by clone_wiki; ignore */
-          }
-        }
+        // The clone produces a new, independent wiki entry. The
+        // original entry (a remote / site pointer, e.g. a template)
+        // is left untouched — the relationship between a remote-
+        // registry entry and a local checkout on disk is recovered
+        // from the clone's `git remote` config, not by mutating the
+        // remote entry's `local_path`.
         await refresh();
         break;
       }
