@@ -318,21 +318,46 @@ async fn poll_wiki_ports(
         // While any port is still showing as `No`, keep the tight
         // 250ms cadence so the dashboard flips green the instant
         // the in-container HTTP server starts responding. Once
-        // every port has settled to a known-good result, slow down
-        // to ~1Hz to avoid hammering the publish proxy and filling
-        // the container access log with HEAD requests during long
-        // builds.
-        let all_ok = effective
-            .values()
-            .all(|r| matches!(r, Reachable::Loopback | Reachable::Direct(_)));
+        // every port has settled to a known-good result, exit the
+        // poller entirely: the in-container HTTP server's access
+        // log was filling with `HEAD /` requests, and re-checking
+        // a known-good port adds no information the dashboard can
+        // act on. Set `WIKI3_KEEP_PROBING=1` to keep polling at
+        // 1Hz indefinitely (useful for diagnosing flaky links).
+        let all_ok = !effective.is_empty()
+            && effective
+                .values()
+                .all(|r| matches!(r, Reachable::Loopback | Reachable::Direct(_)));
+        write_cached(&wiki_id, effective);
+        if all_ok && !keep_probing_after_settled() {
+            eprintln!(
+                "[port-poller] exit (settled) wiki_id={wiki_id} — set WIKI3_KEEP_PROBING=1 to keep checking"
+            );
+            // Deliberately do *not* call `release_poller` here:
+            // the cache already holds a successful result, and we
+            // want subsequent dashboard refreshes to keep showing
+            // it without re-spawning a poller (which would put
+            // the `HEAD /` lines back into the container log).
+            return;
+        }
         let interval = if all_ok {
             POLL_INTERVAL_STABLE
         } else {
             POLL_INTERVAL_FAST
         };
-        write_cached(&wiki_id, effective);
         tokio::time::sleep(interval).await;
     }
+}
+
+/// Returns true if the user has opted into continuing to probe
+/// ports after at least one working address has been identified.
+/// Default is to stop, which silences the in-container access log
+/// and avoids any further publish-proxy traffic.
+fn keep_probing_after_settled() -> bool {
+    matches!(
+        std::env::var("WIKI3_KEEP_PROBING").as_deref(),
+        Ok("1") | Ok("true") | Ok("yes")
+    )
 }
 
 /// Read `devcontainer.json` and return the parsed list of forwarded
@@ -393,12 +418,15 @@ fn rows_from_cache(wiki_id: &str, local_path: &Path) -> Vec<PortRow> {
         let key = format!("{}-{}", slugify(&repo_slug), key_name);
 
         let (serving, host) = match read_cached(wiki_id, port) {
-            // Pin to `127.0.0.1` rather than `localhost` so service
-            // workers (e.g. JupyterLite) stay registered against a
-            // single, stable origin.
-            Reachable::Loopback => (true, "127.0.0.1".to_string()),
+            // Use `localhost` for the loopback path so the URL
+            // displayed in the dashboard matches what users
+            // typically expect to see (and what most documentation
+            // for in-container tools uses). Apple Container's
+            // publish-proxy responds on the IPv4 loopback, which
+            // `localhost` resolves to first on macOS.
+            Reachable::Loopback => (true, "localhost".to_string()),
             Reachable::Direct(ip) => (true, ip.to_string()),
-            Reachable::No => (false, "127.0.0.1".to_string()),
+            Reachable::No => (false, "localhost".to_string()),
         };
         let url = format!("{protocol}://{host}:{port}/");
 
@@ -914,15 +942,15 @@ mod tests {
         let rows = rows_from_cache(wiki_id, tmp.path());
         assert_eq!(rows.len(), 1);
         assert!(!rows[0].serving);
-        assert!(rows[0].url.starts_with("http://127.0.0.1:"));
+        assert!(rows[0].url.starts_with("http://localhost:"));
 
-        // Cache says Loopback → serving=true with 127.0.0.1 host.
+        // Cache says Loopback → serving=true with localhost host.
         let mut m = HashMap::new();
         m.insert(port, Reachable::Loopback);
         write_cached(wiki_id, m);
         let rows = rows_from_cache(wiki_id, tmp.path());
         assert!(rows[0].serving);
-        assert_eq!(rows[0].url, format!("http://127.0.0.1:{port}/"));
+        assert_eq!(rows[0].url, format!("http://localhost:{port}/"));
 
         // Cache says Direct(ip) → serving=true with that IP as host.
         let mut m = HashMap::new();
