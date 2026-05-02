@@ -193,6 +193,22 @@ pub fn local_port(wiki_id: &str, container_port: u16) -> Option<u16> {
         .map(|f| f.local_port)
 }
 
+/// Snapshot of the live forwarder registry: every entry as
+/// `(wiki_id, container_port, local_port, target)`. Used by the
+/// diagnostic report so a Tahoe user can see exactly which
+/// loopback listeners belong to wiki3-app and which container
+/// each one is bridging to.
+pub fn snapshot() -> Vec<(String, u16, u16, SocketAddrV4)> {
+    let g = registry().lock().unwrap();
+    let mut out: Vec<_> = g
+        .entries
+        .iter()
+        .map(|((wiki, port), f)| (wiki.clone(), *port, f.local_port, f.target))
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    out
+}
+
 async fn run_accept_loop(
     wiki_id: String,
     container_port: u16,

@@ -29,7 +29,7 @@ const PROBE_READ_TIMEOUT: Duration = Duration::from_millis(2000);
 /// pass the path to `reveal_path` to surface the file in Finder.
 #[command]
 pub async fn run_diagnostic_report(app: tauri::AppHandle) -> Result<String, String> {
-    let report = build_report().await;
+    let report = build_report(Some(&app)).await;
 
     let log_dir: PathBuf = app
         .path()
@@ -45,7 +45,7 @@ pub async fn run_diagnostic_report(app: tauri::AppHandle) -> Result<String, Stri
     Ok(path.to_string_lossy().into_owned())
 }
 
-async fn build_report() -> String {
+async fn build_report(app: Option<&tauri::AppHandle>) -> String {
     let mut buf = String::with_capacity(8 * 1024);
     let _ = writeln!(buf, "# wiki3-app diagnostics");
     let _ = writeln!(buf, "generated: {}", now_rfc3339());
@@ -98,10 +98,22 @@ async fn build_report() -> String {
     }
 
     section(&mut buf, "host listening sockets");
+    let pid = std::process::id();
+    let _ = writeln!(buf, "(wiki3-app PID = {pid})");
     capture(
         &mut buf,
         "lsof -nP -iTCP -sTCP:LISTEN",
         &["lsof", "-nP", "-iTCP", "-sTCP:LISTEN"],
+    )
+    .await;
+    capture(
+        &mut buf,
+        "lsof for wiki3-app PID",
+        &[
+            "sh",
+            "-c",
+            &format!("lsof -nP -iTCP -p {pid} 2>&1 || true"),
+        ],
     )
     .await;
     capture(
@@ -111,11 +123,79 @@ async fn build_report() -> String {
     )
     .await;
 
+    section(&mut buf, "wiki3-app forwarder registry");
+    let forwarders = crate::wiki::forwarder::snapshot();
+    if forwarders.is_empty() {
+        let _ = writeln!(buf, "(no active forwarders)");
+    } else {
+        for (wiki_id, container_port, local_port, target) in &forwarders {
+            let _ = writeln!(
+                buf,
+                "wiki_id={wiki_id} container_port={container_port} \
+                 local=127.0.0.1:{local_port} -> {target}"
+            );
+        }
+        let _ = writeln!(buf);
+        let _ = writeln!(buf, "# probing each forwarder's local loopback port");
+        for (_, _, local_port, _) in &forwarders {
+            probe_tcp_report(&mut buf, "127.0.0.1", *local_port).await;
+        }
+    }
+
+    section(&mut buf, "wiki3-app registered wikis");
+    if let Some(app) = app {
+        use tauri::Manager;
+        if let Some(state) = app.try_state::<crate::wiki::commands::WikiState>() {
+            match state.manager.list() {
+                Ok(wikis) => {
+                    if wikis.is_empty() {
+                        let _ = writeln!(buf, "(no wikis registered)");
+                    }
+                    for w in wikis {
+                        let _ = writeln!(
+                            buf,
+                            "wiki_id={} name={:?} local_path={:?}",
+                            w.id, w.name, w.local_path
+                        );
+                    }
+                }
+                Err(e) => {
+                    let _ = writeln!(buf, "(list failed: {e})");
+                }
+            }
+        } else {
+            let _ = writeln!(buf, "(WikiState not available)");
+        }
+    } else {
+        let _ = writeln!(buf, "(no app handle in test mode)");
+    }
+
     section(&mut buf, "loopback probe (the failing path on bad hosts)");
     for c in &containers {
         for &port in &c.host_ports {
             probe_tcp_report(&mut buf, "127.0.0.1", port).await;
             probe_tcp_report(&mut buf, "::1", port).await;
+        }
+    }
+
+    section(&mut buf, "publish-proxy on host LAN address");
+    let _ = writeln!(
+        buf,
+        "(Apple Container's publish-proxy listens on `*:port`. If it's healthy,\n\
+         this connect should also succeed. If only loopback fails, the breakage\n\
+         is specifically in the proxy's loopback path.)",
+    );
+    let lan_ipv4 = primary_lan_ipv4().await;
+    match lan_ipv4 {
+        Some(ip) => {
+            for c in &containers {
+                for &port in &c.host_ports {
+                    probe_tcp_report(&mut buf, &ip.to_string(), port).await;
+                }
+            }
+        }
+        None => {
+            let _ = writeln!(buf, "(could not determine LAN IPv4)");
         }
     }
 
@@ -423,6 +503,32 @@ async fn self_test_loopback(buf: &mut String) {
     let _ = server.join();
 }
 
+/// Find the primary IPv4 address on the host's LAN interface — the
+/// address other devices on the network would use to reach this Mac.
+/// Used to probe Apple Container's publish-proxy from a non-loopback
+/// path so we can tell apart "the proxy is broken everywhere" from
+/// "only the loopback path is broken".
+async fn primary_lan_ipv4() -> Option<Ipv4Addr> {
+    let out = capture_string("sh", &["-c", "route -n get default 2>/dev/null | awk '/interface:/ {print $2}'"])
+        .await?;
+    let iface = out.trim();
+    if iface.is_empty() {
+        return None;
+    }
+    let addrs = capture_string(
+        "sh",
+        &[
+            "-c",
+            &format!("ifconfig {iface} 2>/dev/null | awk '/inet / {{print $2}}'"),
+        ],
+    )
+    .await?;
+    addrs
+        .split_whitespace()
+        .find_map(|s| s.parse::<Ipv4Addr>().ok())
+        .filter(|ip| !ip.is_loopback() && !ip.is_unspecified())
+}
+
 fn now_rfc3339() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -471,7 +577,7 @@ mod tests {
     /// the section headers appear.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn build_report_runs_to_completion() {
-        let report = tokio::time::timeout(std::time::Duration::from_secs(60), build_report())
+        let report = tokio::time::timeout(std::time::Duration::from_secs(60), build_report(None))
             .await
             .expect("build_report timed out");
 
