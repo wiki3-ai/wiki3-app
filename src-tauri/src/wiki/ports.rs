@@ -71,6 +71,12 @@ enum Reachable {
     /// the loopback proxy is being intercepted by a host-side
     /// network filter.
     Direct(Ipv4Addr),
+    /// Reached via an in-process TCP forwarder bound on
+    /// `127.0.0.1:<local>` that tunnels to `<container_ip>:<port>`.
+    /// We promote `Direct` to this when loopback is broken so the
+    /// dashboard can advertise a `localhost` URL that satisfies
+    /// Chrome's secure-context / service-worker constraints.
+    Forwarder { local: u16, target: Ipv4Addr },
     /// Neither path has responded yet, or the last probe failed.
     No,
 }
@@ -174,7 +180,10 @@ fn release_poller(wiki_id: &str) {
 /// be unit tested without spinning up the runtime.
 fn apply_sticky(prev: Reachable, fresh: Reachable, streak: &mut u32, budget: u32) -> Reachable {
     match (prev, fresh) {
-        (Reachable::Loopback | Reachable::Direct(_), Reachable::No) => {
+        (
+            Reachable::Loopback | Reachable::Direct(_) | Reachable::Forwarder { .. },
+            Reachable::No,
+        ) => {
             *streak = streak.saturating_add(1);
             if *streak >= budget {
                 Reachable::No
@@ -222,6 +231,7 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
             Some(age) if age < POLLER_IDLE_TIMEOUT => { /* keep going */ }
             _ => {
                 eprintln!("[port-poller] exit (idle) wiki_id={wiki_id}");
+                crate::wiki::forwarder::stop_all_for_wiki(&wiki_id);
                 release_poller(&wiki_id);
                 return;
             }
@@ -311,6 +321,36 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
         .await
         .unwrap_or_default();
 
+        // Promote any `Direct(ip)` result to `Forwarder` by
+        // standing up an in-process TCP tunnel on `127.0.0.1:0`.
+        // This is the workaround for Tahoe hosts where Apple
+        // Container's publish-proxy ACCEPT-then-RSTs on loopback
+        // and Chrome refuses to load the working vmnet URL
+        // because RFC1918 isn't a service-worker-secure context.
+        // `forwarder::ensure` is idempotent for an unchanged
+        // target, so this runs every tick without churning ports.
+        let mut promoted: HashMap<u16, Reachable> = HashMap::with_capacity(raw_results.len());
+        for (port, fresh) in raw_results {
+            let final_fresh = match fresh {
+                Reachable::Direct(ip) => {
+                    match crate::wiki::forwarder::ensure(&wiki_id, port, ip).await {
+                        Some(local) => Reachable::Forwarder { local, target: ip },
+                        None => Reachable::Direct(ip),
+                    }
+                }
+                Reachable::Loopback => {
+                    // Loopback recovered — drop the tunnel so we
+                    // stop holding the local port and the URL
+                    // stabilises back on the publish-proxy.
+                    crate::wiki::forwarder::stop(&wiki_id, port);
+                    Reachable::Loopback
+                }
+                other => other,
+            };
+            promoted.insert(port, final_fresh);
+        }
+        let raw_results = promoted;
+
         // Apply the sticky-OK rule: if the previous cache entry was
         // a successful path and this probe came back `No`, hold the
         // previous result for up to `STICKY_OK_FAILURE_BUDGET`
@@ -346,7 +386,7 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
         let all_ok = !effective.is_empty()
             && effective
                 .values()
-                .all(|r| matches!(r, Reachable::Loopback | Reachable::Direct(_)));
+                .all(|r| matches!(r, Reachable::Loopback | Reachable::Direct(_) | Reachable::Forwarder { .. }));
         write_cached(&wiki_id, effective);
         if all_ok && !keep_probing_after_settled() {
             eprintln!(
@@ -436,18 +476,25 @@ fn rows_from_cache(wiki_id: &str, local_path: &Path) -> Vec<PortRow> {
             .unwrap_or_else(|| port.to_string());
         let key = format!("{}-{}", slugify(&repo_slug), key_name);
 
-        let (serving, host) = match read_cached(wiki_id, port) {
+        let (serving, host, port_for_url) = match read_cached(wiki_id, port) {
             // Use `localhost` for the loopback path so the URL
             // displayed in the dashboard matches what users
             // typically expect to see (and what most documentation
             // for in-container tools uses). Apple Container's
             // publish-proxy responds on the IPv4 loopback, which
             // `localhost` resolves to first on macOS.
-            Reachable::Loopback => (true, "localhost".to_string()),
-            Reachable::Direct(ip) => (true, ip.to_string()),
-            Reachable::No => (false, "localhost".to_string()),
+            Reachable::Loopback => (true, "localhost".to_string(), port),
+            Reachable::Direct(ip) => (true, ip.to_string(), port),
+            // Forwarder path: we own a local listener that proxies
+            // to the container's vmnet address. The URL points at
+            // `localhost:<local>` so Chrome treats the page as a
+            // secure context (service workers register, no
+            // HTTPS-First upgrade), while the bytes flow over the
+            // working vmnet bridge under the hood.
+            Reachable::Forwarder { local, .. } => (true, "localhost".to_string(), local),
+            Reachable::No => (false, "localhost".to_string(), port),
         };
-        let url = format!("{protocol}://{host}:{port}/");
+        let url = format!("{protocol}://{host}:{port_for_url}/");
 
         out.push(PortRow {
             external: port,
@@ -976,6 +1023,22 @@ mod tests {
         let rows = rows_from_cache(wiki_id, tmp.path());
         assert!(rows[0].serving);
         assert_eq!(rows[0].url, format!("http://192.168.64.7:{port}/"));
+
+        // Cache says Forwarder { local, .. } → serving=true with
+        // localhost host and the *local* port (so Chrome treats it
+        // as a secure context for service workers).
+        let mut m = HashMap::new();
+        m.insert(
+            port,
+            Reachable::Forwarder {
+                local: 54321,
+                target: Ipv4Addr::new(192, 168, 64, 7),
+            },
+        );
+        write_cached(wiki_id, m);
+        let rows = rows_from_cache(wiki_id, tmp.path());
+        assert!(rows[0].serving);
+        assert_eq!(rows[0].url, "http://localhost:54321/");
 
         evict(wiki_id);
     }
