@@ -266,6 +266,19 @@ export function openExternalUrl(url: string): Promise<void> {
   return invoke<void>('open_external_url', { url });
 }
 
+/** Reveal an arbitrary path in the OS file manager. */
+export function revealPath(path: string): Promise<void> {
+  return invoke<void>('reveal_path', { path });
+}
+
+/**
+ * Generate a diagnostic report file (Apple Container state, host loopback
+ * probes, network filter scan, etc.) and return the absolute path to it.
+ */
+export function runDiagnosticReport(): Promise<string> {
+  return invoke<string>('run_diagnostic_report');
+}
+
 // ── File dialog helpers ──────────────────────────────────────────────────
 
 /** Return whether a directory path exists and has no entries. */

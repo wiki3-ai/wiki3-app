@@ -180,6 +180,7 @@ function render(): void {
           <button class="w3-btn w3-btn-primary" data-action="add-wiki">Add Wiki</button>
           <button class="w3-btn" data-action="clone-wiki">Clone from URL…</button>
           <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
+          <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
           <button class="w3-btn" data-action="restore-defaults">Restore defaults</button>
         </div>
       </div>`;
@@ -192,6 +193,7 @@ function render(): void {
       <button class="w3-btn w3-btn-primary" data-action="add-wiki">Add Wiki…</button>
       <button class="w3-btn" data-action="clone-wiki">Clone from URL…</button>
       <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
+      <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
     </div>
     <div class="w3-workspace-list" id="w3-wiki-list">${cards}</div>
   `;
@@ -1052,6 +1054,22 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
         await wikiApi.restoreDefaultWikis();
         await refresh();
         break;
+      case 'diagnose': {
+        try {
+          const path = await wikiApi.runDiagnosticReport();
+          try {
+            await wikiApi.revealPath(path);
+          } catch {
+            /* reveal is best-effort; the path is still in the alert */
+          }
+          // eslint-disable-next-line no-alert
+          alert(`Diagnostic report saved to:\n${path}`);
+        } catch (e) {
+          // eslint-disable-next-line no-alert
+          alert(`Diagnostic report failed: ${e}`);
+        }
+        break;
+      }
       case 'open-site': {
         const w = wikis.find((x) => x.id === id);
         const url = w?.site_url ?? null;

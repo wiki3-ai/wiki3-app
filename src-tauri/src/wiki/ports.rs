@@ -196,11 +196,7 @@ fn apply_sticky(prev: Reachable, fresh: Reachable, streak: &mut u32, budget: u32
 /// only populated by some of the start paths. The cache is *not*
 /// evicted on exit, so the dashboard keeps showing the last known
 /// state across brief poller restarts.
-async fn poll_wiki_ports(
-    wiki_id: String,
-    local_path: std::path::PathBuf,
-    app: tauri::AppHandle,
-) {
+async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: tauri::AppHandle) {
     use tauri::Manager;
     eprintln!(
         "[port-poller] start wiki_id={wiki_id} path={}",
@@ -236,38 +232,61 @@ async fn poll_wiki_ports(
         // keeps `container inspect` calls down to roughly one every
         // few seconds (or immediately on container swap), instead
         // of one per probe tick.
+        //
+        // We try `LocalSiteManager` first (cheap, in-memory) and
+        // fall back to `find_container_by_mount_source`, which
+        // walks `container ls --format json` and matches on the
+        // workspace path. The fallback is necessary because
+        // `LocalSiteManager` is process-local: if wiki3-app is
+        // restarted while the container is still running (very
+        // common with the bundled .app on a Tahoe machine), the
+        // map will be empty even though the container is healthy
+        // on its vmnet IP.
         let container_ipv4 = {
+            let needs_refresh = last_inspect_at
+                .map(|t| t.elapsed() >= INSPECT_REFRESH_INTERVAL)
+                .unwrap_or(true);
+
             let site_state = app.state::<LocalSiteManager>();
-            match site_state.get(&wiki_id) {
-                Some(site) => {
-                    let needs_refresh = cached_for_container.as_deref()
-                        != Some(site.serve_container.as_str())
-                        || last_inspect_at
-                            .map(|t| t.elapsed() >= INSPECT_REFRESH_INTERVAL)
-                            .unwrap_or(true);
-                    if needs_refresh {
-                        let bin = crate::tools::apple_container::detect()
-                            .path
-                            .unwrap_or_else(|| std::path::PathBuf::from("container"));
-                        let resolved = crate::tools::apple_container::inspect_container_ipv4(
-                            &bin,
-                            &site.serve_container,
-                        )
-                        .await
-                        .and_then(|s| s.parse::<Ipv4Addr>().ok());
-                        cached_ip = resolved;
-                        cached_for_container = Some(site.serve_container.clone());
-                        last_inspect_at = Some(Instant::now());
+            let known_name = site_state.get(&wiki_id).map(|s| s.serve_container);
+            let needs_refresh =
+                needs_refresh || cached_for_container.as_deref() != known_name.as_deref();
+
+            if needs_refresh {
+                let bin = crate::tools::apple_container::detect()
+                    .path
+                    .unwrap_or_else(|| std::path::PathBuf::from("container"));
+                if let Some(name) = known_name {
+                    let resolved =
+                        crate::tools::apple_container::inspect_container_ipv4(&bin, &name)
+                            .await
+                            .and_then(|s| s.parse::<Ipv4Addr>().ok());
+                    cached_ip = resolved;
+                    cached_for_container = Some(name);
+                } else {
+                    // Fall back to discovering the container by
+                    // mount source. One `container ls` per refresh
+                    // interval — same load profile as inspecting a
+                    // known name.
+                    match crate::tools::apple_container::find_container_by_mount_source(
+                        &bin,
+                        &local_path,
+                    )
+                    .await
+                    {
+                        Some((name, ipv4)) => {
+                            cached_ip = ipv4.parse::<Ipv4Addr>().ok();
+                            cached_for_container = Some(name);
+                        }
+                        None => {
+                            cached_ip = None;
+                            cached_for_container = None;
+                        }
                     }
-                    cached_ip
                 }
-                None => {
-                    cached_ip = None;
-                    cached_for_container = None;
-                    last_inspect_at = None;
-                    None
-                }
+                last_inspect_at = Some(Instant::now());
             }
+            cached_ip
         };
 
         // Read the configured ports each tick rather than caching them,
@@ -662,9 +681,7 @@ mod tests {
                         let _ = s.set_read_timeout(Some(Duration::from_millis(50)));
                         let mut buf = [0u8; 256];
                         let _ = s.read(&mut buf);
-                        let _ = s.write_all(
-                            b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK",
-                        );
+                        let _ = s.write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 2\r\n\r\nOK");
                         let _ = s.flush();
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {

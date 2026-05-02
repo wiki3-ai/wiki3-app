@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod commands_devcontainer;
 pub mod config;
+pub mod diagnostics;
 pub mod git;
 pub mod host;
 pub mod menu;
@@ -353,6 +354,7 @@ pub fn run() {
             // dependency, and we only detect it (never install it).
             tools::commands::detect_apple_container,
             tools::commands::detect_git,
+            diagnostics::run_diagnostic_report,
             open_url,
         ])
         .build(tauri::generate_context!())
