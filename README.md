@@ -86,7 +86,8 @@ TypeScript modules for desktop integration and publishing UI:
 - **Per-wiki Git & Push**: Local repos expose Commit, Push, Pull, Publish, Build, Serve, and Site buttons. The commit dialog has an "Also publish" option, and each wiki has a persistent **Publish on Commit** checkbox so one click can do commit + push.
 - **Build**: Runs `jupyter lite build` inside Apple Container (or on the host as a fallback) to produce the static `_output/`.
 - **Serve / Stop**: Starts (or stops) a per-wiki preview container that runs `jupyter lite serve` and a watch loop. The build is included in the serve startup, so you don't need to click Build first — but Build is handy when you just want to refresh the static output without serving it.
-- **Site**: When the preview container is running, opens the loopback URL (`http://<host>:<port>/`) in your default OS browser. Hostname is read from `/etc/hosts` (preferring `::1`, falling back to `127.0.0.1`, falling back to `localhost`).
+- **Site**: When the wiki has a configured `site_url` (e.g. a GitHub Pages URL), opens it in your default OS browser. When the wiki only has a local preview, the per-port URL row on the card opens the running container's port (e.g. `http://localhost:8000/`) in a new in-app window. The dashboard waits until the port poller has confirmed the port is actually answering HTTP before showing the URL as live — see [docs/networking.md](docs/networking.md) for the full path-selection logic, including the in-process TCP forwarder that handles hosts where Apple Container's loopback publish-proxy is broken.
+- **Diagnose…**: Per-wiki action that runs a network/container/process diagnostic and writes a timestamped report to `~/Library/Logs/ai.wiki3.studio/wiki3-diagnostics-<stamp>.txt`. Useful for filing bugs about port reachability or container lifecycle issues; full schema in [docs/networking.md](docs/networking.md#diagnostics).
 - **Autostart Container**: Per-wiki checkbox. When set, the preview container starts automatically on app launch.
 - **Add Wiki / Clone / Open Local**: File-dialog driven flows defaulting to `~/Wiki3`. Wikis are loose records — any combination of local path / remote / site URL is valid.
 - **Seeded Defaults**: First launch seeds `wiki3-ai/wiki3-ai-site` and `wiki3-ai/wiki3-ai-template`. Removing a default does not re-seed it.
@@ -130,17 +131,18 @@ Each wiki card on the dashboard exposes a set of buttons driven by which of the 
 
 - **Build** runs `jupyter lite build` (inside Apple Container if the repo has a `.devcontainer/`, otherwise on the host).
 - **Serve** starts a per-wiki preview container that runs `jupyter lite serve` (with the build included on startup) and a polling watch loop that rebuilds when content changes. **Stop** tears the container down.
-- **Site** appears once the preview container is accepting connections and opens the loopback URL in your default OS browser. Because it opens externally, the build-still-running case shows up as a browser-level connection error rather than a blank in-app window.
+- **Site** opens the wiki's configured site URL externally (when set). The per-port URL row that appears once `Serve` is running opens the local preview in an in-app window instead — picked from a path the port poller has actually verified. The exact selection logic (loopback / direct vmnet / in-process forwarder) lives in [docs/networking.md](docs/networking.md).
 - **Autostart Container** is a per-wiki checkbox that re-starts the preview container on app launch.
 
 ### Planned follow-ups (not in this release)
 
 The following pieces of the "local wiki as a live editing surface" vision need more design work and are tracked for future PRs:
 
-- **Local preview server** — serving a built `_output/` directory to a new in-app window over `http://127.0.0.1:<port>/` so JupyterLite's service worker can work. Design decisions needed: which embedded HTTP server to adopt, per-wiki port lifecycle, and how the trusted-origin allowlist is extended for loopback URLs.
 - **WebStorage ↔ local-file sync** — syncing notebook/markdown edits made in JupyterLite's IndexedDB/localStorage back to the wiki's local repo so they can be committed. This needs a coordinated change in the `wiki3-ai-site` repo's contents manager to route reads/writes through the desktop host bridge (see `src/lib/bridge.ts`).
 
-The backend foundation for these (per-wiki git operations tied to a `local_path`) is already in place in this PR.
+The local preview server itself is **already in place**: each wiki's `Serve` button starts an Apple Container running JupyterLite with `--publish 8000:8000`, and a per-wiki port poller resolves a browser-safe loopback URL (falling back to an in-process TCP forwarder on hosts where Apple Container's publish-proxy is broken). See [docs/networking.md](docs/networking.md) for the full design and the corner cases we now handle.
+
+The backend foundation for the WebStorage-sync follow-up (per-wiki git operations tied to a `local_path`) is already in place in this PR.
 
 ## Publishing Workflow (advanced)
 
@@ -158,7 +160,7 @@ The above dashboard flow is the common path. The following auth-based flows are 
 2. Click "New Site from Template"
 3. Enter your GitHub username/org, repo name, and visibility
 4. The default template is `wiki3-ai/wiki3-ai-template`
-5. The app creates the repo, clones it to `~/Wiki3Sites/<repo-name>`, and records it as a workspace
+5. The app creates the repo, clones it to `~/Wiki3/<repo-name>`, and records it as a workspace
 
 ### Forking an Existing Site
 
@@ -217,34 +219,21 @@ npm install
 ### Run
 
 ```bash
+npm run tauri:dev
+```
+
+If your machine sits behind an HTTP proxy that needs to be picked up
+by the WebView and the embedded git/curl operations, export the
+standard proxy env vars before launching. `127.0.0.1` (or
+`192.168.64.1` for traffic originating inside Apple Container) is
+the usual host; `host.docker.internal` works too on Apple Container
+≥ 0.12. Always include the loopback addresses in `NO_PROXY` so the
+local preview forwarder isn't routed through the proxy:
+
+```bash
 export HTTPS_PROXY=http://localhost:3128
 export HTTP_PROXY=http://localhost:3128
 export NO_PROXY=localhost,127.0.0.1,host.docker.internal
-export https_proxy=http://localhost:3128
-export http_proxy=http://localhost:3128
-export no_proxy=localhost,127.0.0.1,host.docker.internal
-npm run tauri:dev
-```
-
-
-```bash
-export HTTPS_PROXY=http://host.docker.internal:3128
-export HTTP_PROXY=http://host.docker.internal:3128
-export NO_PROXY=localhost,127.0.0.1,host.docker.internal
-export https_proxy=http://host.docker.internal:3128
-export http_proxy=http://host.docker.internal:3128
-export no_proxy=localhost,127.0.0.1,host.docker.internal
-npm run tauri:dev
-```
-192.168.64.1
-
-```bash
-export HTTPS_PROXY=http://192.168.64.1:3128
-export HTTP_PROXY=http://192.168.64.1:3128
-export NO_PROXY=localhost,127.0.0.1,host.docker.internal
-export https_proxy=http://192.168.64.1:3128
-export http_proxy=http://192.168.64.1:3128
-export no_proxy=localhost,127.0.0.1,host.docker.internal
 npm run tauri:dev
 ```
 
@@ -285,7 +274,7 @@ npm test
 | `WIKI3_DEV_URL` | Override site URL for development | (none — uses production URL) |
 | Production URL | Trusted wiki3.ai site | `https://wiki3.ai` |
 | App data directory | Persistent state location | OS-specific app data dir |
-| Workspaces directory | Default location for cloned sites | `~/Wiki3Sites/` |
+| Workspaces directory | Default location for cloned sites | `~/Wiki3/` |
 
 ### App Settings (persisted in `window_state.json`)
 

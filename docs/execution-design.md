@@ -27,7 +27,9 @@ The desktop app's job is to make all of this work locally without relying on thi
 
 ### How the Desktop App Runs Code
 
-Wiki3 for Mac is a **Tauri 2** desktop app. It does **not** launch Python interpreters, spawn kernel processes, or run containers. Instead it opens a WebView window pointing at a remote JupyterLite site and acts as a permission-gated host.
+Wiki3 for Mac is a **Tauri 2** desktop app. It opens a WebView window pointing at a JupyterLite site and acts as a permission-gated host. It does **not** launch Python interpreters or spawn Jupyter kernel processes — kernels run inside the WebView's JupyterLite (Pyodide WASM, JavaScript, AI SDK Chat).
+
+For *local-preview* serving (the `Serve` button on a wiki card), the app does run an Apple Container that hosts the JupyterLite static build. The design and failure modes of that path are documented separately in [networking.md](./networking.md). The container hosts the *site*, not the kernel — kernels are still in-WebView.
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -110,10 +112,10 @@ Workspaces (`workspace/types.rs`) represent a local repo connected to a remote p
 
 #### What the Tauri Host Does NOT Do (Today)
 
-- Does not launch Python, Node.js, or any interpreter process.
-- Does not manage kernel lifecycle, restart, or interrupt.
+- Does not launch Python, Node.js, or any interpreter process for kernel execution.
+- Does not manage Jupyter kernel lifecycle, restart, or interrupt.
 - Does not provide filesystem access to kernel code.
-- Does not run containers of any kind.
+- Does not run *kernel* containers — but it **does** run *site-preview* containers (Apple Container running JupyterLite via `Serve`); see [networking.md](./networking.md).
 - Does not sandbox kernel code beyond the WebView boundary.
 
 ---
