@@ -308,6 +308,41 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
             continue;
         }
 
+        // If no container is running for this wiki, skip the probe
+        // entirely. Otherwise the loopback probe at `127.0.0.1:<port>`
+        // would happily succeed against an *unrelated* wiki's
+        // publish-proxy when both wikis declare the same
+        // `forwardPorts` (e.g. two devcontainers both forwarding
+        // 8888) — conflating their port status — and the poller
+        // would run forever at the fast cadence with no live
+        // container to settle against. We still tick at the slow
+        // cadence so the dashboard reflects "nothing serving" if
+        // the container is stopped, and we pick up a freshly-
+        // started container within `INSPECT_REFRESH_INTERVAL`.
+        if cached_for_container.is_none() {
+            let mut empty: HashMap<u16, Reachable> = HashMap::with_capacity(ports.len());
+            for port in &ports {
+                let prev = read_cached(&wiki_id, *port);
+                let streak = fail_streak.entry(*port).or_insert(0);
+                let resolved =
+                    apply_sticky(prev, Reachable::No, streak, STICKY_OK_FAILURE_BUDGET);
+                empty.insert(*port, resolved);
+            }
+            for (port, reach) in &empty {
+                if last_logged.get(port) != Some(reach) {
+                    eprintln!(
+                        "[port-poller] wiki_id={wiki_id} port={port} (no container) -> {:?}",
+                        reach
+                    );
+                    last_logged.insert(*port, *reach);
+                }
+            }
+            write_cached(&wiki_id, empty);
+            crate::wiki::forwarder::stop_all_for_wiki(&wiki_id);
+            tokio::time::sleep(POLL_INTERVAL_STABLE).await;
+            continue;
+        }
+
         // Run the probes off the async runtime — `TcpStream` is
         // blocking and can hang up to its full timeout.
         let to_probe = ports.clone();
