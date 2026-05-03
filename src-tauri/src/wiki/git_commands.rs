@@ -374,6 +374,8 @@ async fn build_site_in_devcontainer(
     run_cmd
         .arg("run")
         .arg("--rm")
+        .arg("--env")
+        .arg("HOST_GATEWAY_IP=192.168.64.1")
         .arg("--volume")
         .arg(&mount_arg)
         .arg("--workdir")
@@ -383,7 +385,18 @@ async fn build_site_in_devcontainer(
         run_cmd.arg("--user").arg(user);
     }
 
-    run_cmd.arg(&image_ref).arg("bash").arg("-lc").arg(&cmd_str);
+    // Inject `host.docker.internal` -> bridge gateway by writing
+    // `/etc/hosts` in the same shell that runs the build, before
+    // the user command. See `local_site::run_detached` for
+    // rationale and the longer comment.
+    let wrapped_cmd_str = format!(
+        "printf '192.168.64.1\\thost.docker.internal\\n' >> /etc/hosts 2>/dev/null || true\n{cmd_str}"
+    );
+    run_cmd
+        .arg(&image_ref)
+        .arg("bash")
+        .arg("-lc")
+        .arg(&wrapped_cmd_str);
 
     let (status, stdout, stderr) =
         log_stream::run_and_stream(app, Some(wiki_id), "build", run_cmd).await?;

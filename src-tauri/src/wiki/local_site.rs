@@ -247,12 +247,30 @@ async fn run_detached(
     // sees a single ordered stream. We don't wrap here because
     // `{ …; } 2>&1` doesn't compose with multi-line scripts.
 
+    // Inject `host.docker.internal` -> Apple Container bridge
+    // gateway. Apple's `container` CLI (unlike Docker Desktop)
+    // does not auto-register this name, so a host-side service
+    // bound on the bridge IP would otherwise be unreachable from
+    // inside the container by the well-known hostname. Done via
+    // (a) prepending an `/etc/hosts` write to the script — runs
+    // in the same shell *before* the user command, so there is
+    // no race; failures are tolerated for non-root images — and
+    // (b) a `HOST_GATEWAY_IP` env var as a name-free fallback.
+    // Hardcoded to the documented Apple Containers bridge
+    // (`192.168.64.1`); promoting to a config option is future
+    // work.
+    let wrapped_cmd_str = format!(
+        "printf '192.168.64.1\\thost.docker.internal\\n' >> /etc/hosts 2>/dev/null || true\n{cmd_str}"
+    );
+
     let mut cmd = Command::new(container_bin);
     cmd.arg("run")
         .arg("--detach")
         .arg("--rm")
         .arg("--name")
         .arg(name)
+        .arg("--env")
+        .arg("HOST_GATEWAY_IP=192.168.64.1")
         .arg("--volume")
         .arg(&volume_spec)
         .arg("--workdir")
@@ -265,7 +283,7 @@ async fn run_detached(
     if let Some(user) = remote_user {
         cmd.arg("--user").arg(user);
     }
-    cmd.arg(image).arg("bash").arg("-lc").arg(cmd_str);
+    cmd.arg(image).arg("bash").arg("-lc").arg(&wrapped_cmd_str);
 
     log_stream::emit_info(
         app,
