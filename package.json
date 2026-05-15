@@ -1,6 +1,6 @@
 {
   "name": "wiki3-app",
-  "version": "0.5.5",
+  "version": "0.5.6",
   "description": "Desktop app for running Wiki3.ai sites",
   "private": true,
   "scripts": {

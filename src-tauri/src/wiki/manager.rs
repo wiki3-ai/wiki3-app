@@ -268,39 +268,11 @@ fn workspace_to_wiki(ws: &Workspace) -> Wiki {
 }
 
 /// The default wikis seeded on a fresh install.
+///
+/// Currently empty: the dashboard starts with no entries and the
+/// user creates them via Clone from URL / Open Local Repo.
 pub fn default_seeded_wikis() -> Vec<Wiki> {
-    let now = Utc::now();
-    vec![
-        seeded("wiki3-ai", "wiki3-ai-site", "The public Wiki3 site", now),
-        seeded(
-            "wiki3-ai",
-            "wiki3-ai-template",
-            "The Wiki3 starter template",
-            now,
-        ),
-    ]
-}
-
-fn seeded(owner: &str, repo: &str, description: &str, now: chrono::DateTime<Utc>) -> Wiki {
-    Wiki {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: repo.to_string(),
-        local_path: None,
-        remote: Some(RemoteRef {
-            provider: WikiProvider::GitHub,
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            url: format!("https://github.com/{owner}/{repo}"),
-            visibility: WikiVisibility::Public,
-        }),
-        site_url: Some(derive_github_pages_url(owner, repo)),
-        origin: WikiOrigin::Seeded,
-        description: Some(description.to_string()),
-        created_at: now,
-        last_opened_at: now,
-        publish_on_commit: false,
-        autostart_container: false,
-    }
+    Vec::new()
 }
 
 #[cfg(test)]
@@ -313,16 +285,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let mgr = WikiManager::new(dir.path().to_path_buf());
         mgr.init(None).unwrap();
-        let wikis = mgr.list().unwrap();
-        assert_eq!(wikis.len(), 2);
-        assert!(wikis.iter().any(|w| w.name == "wiki3-ai-site"));
-        assert!(wikis.iter().any(|w| w.name == "wiki3-ai-template"));
-        for w in &wikis {
-            assert_eq!(w.origin, WikiOrigin::Seeded);
-            assert!(w.remote.is_some());
-            assert!(w.site_url.is_some());
-            assert!(w.local_path.is_none());
-        }
+        // Default seed set is intentionally empty — the dashboard
+        // starts blank and the user creates wikis via Clone / Open Local.
+        assert!(mgr.list().unwrap().is_empty());
     }
 
     #[test]

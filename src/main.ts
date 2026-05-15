@@ -9,6 +9,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 
 import * as wikiApi from './wiki/api';
+import { CLONE_SOURCES } from './wiki/clone-sources';
 import { computeReorder } from './wiki/dashboard-logic';
 import type { TrackedWindowInfo, Wiki } from './wiki/types';
 import { loadAndSubmitDevcontainer } from './devcontainer-engine';
@@ -177,11 +178,10 @@ function render(): void {
         <h2>Welcome to Wiki3</h2>
         <p>No wikis on your dashboard yet. Add one to get started.</p>
         <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;">
-          <button class="w3-btn w3-btn-primary" data-action="add-wiki">Add Wiki</button>
           <button class="w3-btn" data-action="clone-wiki">Clone from URL…</button>
           <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
+          <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
           <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
-          <button class="w3-btn" data-action="restore-defaults">Restore defaults</button>
         </div>
       </div>`;
     return;
@@ -190,9 +190,9 @@ function render(): void {
   const cards = wikis.map(renderCard).join('');
   main.innerHTML = `
     <div class="w3-actions">
-      <button class="w3-btn w3-btn-primary" data-action="add-wiki">Add Wiki…</button>
       <button class="w3-btn" data-action="clone-wiki">Clone from URL…</button>
       <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
+      <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
       <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
     </div>
     <div class="w3-workspace-list" id="w3-wiki-list">${cards}</div>
@@ -569,90 +569,127 @@ function showShutdownOverlay(): void {
   document.body.appendChild(overlay);
 }
 
-async function openAddWikiDialog(prefill?: Partial<{ remote: string; local: string; site: string }>): Promise<void> {
+function deriveRepoName(url: string): string {
+  const m = url.trim().match(/[:/]([^/:]+?)(?:\.git)?\/?$/);
+  return m ? m[1] : 'my-garden';
+}
+
+function joinPath(parent: string, child: string): string {
+  const sep = parent.includes('\\') && !parent.includes('/') ? '\\' : '/';
+  if (parent.endsWith('/') || parent.endsWith('\\')) return `${parent}${child}`;
+  return `${parent}${sep}${child}`;
+}
+
+async function openCloneDialog(): Promise<void> {
+  const defaultBase = await wikiApi.getDefaultWikisDir().catch(() => '');
+
+  const options = CLONE_SOURCES.map(
+    (s) =>
+      `<option value="${escapeHtml(s.url)}">${escapeHtml(s.label ?? s.url)}</option>`,
+  ).join('');
+
+  const firstUrl = CLONE_SOURCES[0]?.url ?? '';
+  const initialName = firstUrl ? deriveRepoName(firstUrl) : 'my-garden';
+
   const dlg = showDialog(`
-    <h3>Add Wiki</h3>
+    <h3>Clone from URL</h3>
     <p class="w3-muted" style="font-size:13px;margin-bottom:12px;">
-      Provide at least one of the three. Any combination works — fields
-      can be filled in later.
+      Pick a suggested source or type any git URL. The clone will be
+      placed inside the chosen parent folder under the sub-folder name.
     </p>
-    <form class="w3-form" id="add-wiki-form">
-      <label>Name (optional)
-        <input type="text" name="name" placeholder="Auto-derived if empty" />
+    <form class="w3-form" id="clone-form">
+      <label>Suggested source
+        <select name="suggested">
+          ${options}
+          <option value="">Custom…</option>
+        </select>
       </label>
-      <label>Local path
+      <label>Remote URL
+        <input type="text" name="url" value="${escapeHtml(firstUrl)}" placeholder="https://github.com/owner/repo" required />
+      </label>
+      <label>Parent folder
         <div style="display:flex;gap:6px;">
-          <input type="text" name="local_path" value="${escapeHtml(prefill?.local ?? '')}" placeholder="/Users/me/Wiki3/my-garden" style="flex:1;" />
+          <input type="text" name="parent" value="${escapeHtml(defaultBase)}" placeholder="/Users/me/Wiki3" style="flex:1;" required />
           <button type="button" class="w3-btn w3-btn-sm" data-act="pick">Browse…</button>
         </div>
       </label>
-      <label>Remote URL
-        <input type="text" name="remote_url" value="${escapeHtml(prefill?.remote ?? '')}" placeholder="https://github.com/owner/repo" />
+      <label>Sub-folder name
+        <input type="text" name="sub" value="${escapeHtml(initialName)}" required />
       </label>
-      <label>Site URL
-        <input type="text" name="site_url" value="${escapeHtml(prefill?.site ?? '')}" placeholder="https://owner.github.io/repo" />
-      </label>
-      <label>Description (optional)
-        <input type="text" name="description" />
-      </label>
-      <div class="w3-dialog-status" id="add-status" style="display:none;"></div>
+      <div class="w3-dialog-status" id="clone-status" style="display:none;"></div>
       <div class="w3-dialog-actions">
         <button type="button" class="w3-btn" data-act="cancel">Cancel</button>
-        <button type="submit" class="w3-btn w3-btn-primary">Add</button>
+        <button type="submit" class="w3-btn w3-btn-primary">Clone</button>
       </div>
     </form>`);
 
-  const form = dlg.querySelector('#add-wiki-form') as HTMLFormElement;
-  const status = dlg.querySelector('#add-status') as HTMLElement;
+  const form = dlg.querySelector('#clone-form') as HTMLFormElement;
+  const status = dlg.querySelector('#clone-status') as HTMLElement;
+  const urlInput = form.elements.namedItem('url') as HTMLInputElement;
+  const subInput = form.elements.namedItem('sub') as HTMLInputElement;
+  const parentInput = form.elements.namedItem('parent') as HTMLInputElement;
+  const suggested = form.elements.namedItem('suggested') as HTMLSelectElement;
+  const submitBtn = form.querySelector(
+    'button[type="submit"]',
+  ) as HTMLButtonElement;
+
+  // Track whether the user has manually edited the sub-folder so we
+  // don't keep overwriting it as they switch suggested sources.
+  let subTouched = false;
+  subInput.addEventListener('input', () => {
+    subTouched = true;
+  });
+
+  suggested.addEventListener('change', () => {
+    if (suggested.value) {
+      urlInput.value = suggested.value;
+      if (!subTouched) subInput.value = deriveRepoName(suggested.value);
+    }
+  });
+  urlInput.addEventListener('input', () => {
+    // Free-text URL: deselect any suggestion match and refresh the
+    // default sub-folder until the user customises it.
+    const match = Array.from(suggested.options).find(
+      (o) => o.value === urlInput.value,
+    );
+    suggested.value = match ? match.value : '';
+    if (!subTouched && urlInput.value.trim()) {
+      subInput.value = deriveRepoName(urlInput.value);
+    }
+  });
+
   form.querySelector('[data-act="cancel"]')!.addEventListener('click', () => dlg.remove());
   form.querySelector('[data-act="pick"]')!.addEventListener('click', async () => {
     try {
-      const base = await wikiApi.getDefaultWikisDir();
-      const picked = await wikiApi.pickFolder(base);
-      if (picked) {
-        (form.elements.namedItem('local_path') as HTMLInputElement).value = picked;
-      }
+      const picked = await wikiApi.pickFolder(parentInput.value || defaultBase);
+      if (picked) parentInput.value = picked;
     } catch (e) {
       console.error(e);
     }
   });
+
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const fd = new FormData(form);
+    const url = urlInput.value.trim();
+    const parent = parentInput.value.trim();
+    const sub = subInput.value.trim();
+    if (!url || !parent || !sub) return;
+
+    const target = joinPath(parent, sub);
+    status.style.display = 'block';
+    status.classList.remove('w3-error');
+    status.textContent = `Cloning ${url}…`;
+    submitBtn.disabled = true;
     try {
-      await wikiApi.addWiki({
-        name: (fd.get('name') as string) || null,
-        local_path: (fd.get('local_path') as string) || null,
-        remote_url: (fd.get('remote_url') as string) || null,
-        site_url: (fd.get('site_url') as string) || null,
-        description: (fd.get('description') as string) || null,
-      });
+      await wikiApi.cloneWiki(url, target);
       dlg.remove();
       await refresh();
     } catch (err) {
-      status.style.display = 'block';
       status.classList.add('w3-error');
-      status.textContent = String(err);
+      status.textContent = `Clone failed: ${err}`;
+      submitBtn.disabled = false;
     }
   });
-}
-
-async function openCloneDialog(): Promise<void> {
-  const url = window.prompt('Remote repo URL to clone:', 'https://github.com/wiki3-ai/wiki3-ai-template');
-  if (!url || !url.trim()) return;
-
-  const defaultBase = await wikiApi.getDefaultWikisDir().catch(() => '');
-  const m = url.trim().match(/[:/]([^/:]+?)(?:\.git)?\/?$/);
-  const defaultName = m ? m[1] : 'my-garden';
-  const target = await wikiApi.pickCloneTarget(defaultBase, defaultName);
-  if (!target) return;
-
-  try {
-    await wikiApi.cloneWiki(url.trim(), target);
-    await refresh();
-  } catch (err) {
-    alert(`Clone failed: ${err}`);
-  }
 }
 
 async function openLocalRepoDialog(): Promise<void> {
@@ -1032,9 +1069,6 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
 
   try {
     switch (action) {
-      case 'add-wiki':
-        await openAddWikiDialog();
-        break;
       case 'clone-wiki':
         await openCloneDialog();
         break;
