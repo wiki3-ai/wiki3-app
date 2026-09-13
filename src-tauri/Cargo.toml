@@ -28,7 +28,6 @@ dirs = "6"
 uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 tempfile = "3"
-rquickjs = "0.11.0"
 devcontainer-core = { path = "../../devcontainers-cli/src-tauri/crates/devcontainer-core" }
 
 [dev-dependencies]

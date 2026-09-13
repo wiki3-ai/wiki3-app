@@ -2,7 +2,6 @@ pub mod commands;
 pub mod container_controls;
 pub mod forwarder;
 pub mod git_commands;
-pub mod local_site;
 pub mod log_stream;
 pub mod loopback_host;
 pub mod manager;

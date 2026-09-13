@@ -1,31 +1,17 @@
-//! Tools subsystem: Apple Container detection + the *legacy* per-wiki
-//! preview container flow.
+//! Tools subsystem: Apple Container detection, and helpers to probe the
+//! rest of the host toolchain.
 //!
-//! Wiki3 drives Apple Container directly via its `container` CLI, and
-//! this is where the per-wiki **Build / Serve / Stop** preview lives.
-//! The devcontainer configuration format is read and normalised
-//! in-process via an embedded QuickJS module (see
-//! [`devcontainer_config`]).
+//! Apple Container is a separate OS-level install (`.pkg`) and is only
+//! *detected* here, never managed.
 //!
-//! **This is the older of two devcontainer parsing paths.** The
-//! devcontainer *lifecycle* (start / stop / restart / rebuild / remove)
-//! goes through the prebuilt engine bundle in `src/public/` and the
-//! reusable `devcontainer-core` crate, which is runtime-agnostic and can
-//! drive Docker or Podman as well as Apple Containers.
-//!
-//! This subsystem is Apple-only — it has no runtime seam — and its
-//! [`devcontainer_config::DevcontainerConfig`] is a hand-rolled subset
-//! that silently drops fields it does not declare (`mounts`, `runArgs`).
-//! Prefer migrating `Build`/`Serve`/`Stop` onto `devcontainer-core` over
-//! extending anything here. See `docs/devcontainer-engine.md`.
-//!
-//! Apple Container itself is a separate OS-level install (`.pkg`)
-//! and is only *detected* here, never managed.
+//! This module used to also host a second devcontainer parser (an embedded
+//! QuickJS build of a resolver) plus the per-wiki Build / Serve / Stop preview
+//! flow that depended on it. Both are gone: `devcontainer.json` is parsed once,
+//! by the frontend engine bundle, and the result is handed to
+//! `devcontainer-core`'s orchestrator. See `docs/devcontainer-engine.md`.
 
 pub mod apple_container;
 pub mod commands;
-pub mod devcontainer_config;
-pub mod devcontainer_image;
 pub mod git_probe;
 
 use std::path::PathBuf;

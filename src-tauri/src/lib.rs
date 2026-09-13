@@ -15,7 +15,7 @@ pub mod wiki;
 pub mod window_state;
 pub mod workspace;
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
 
 use crate::host::DesktopHostState;
 use crate::publishing_commands::PublishingState;
@@ -109,7 +109,6 @@ pub fn run() {
             app.manage(window_state);
             app.manage(wiki_state);
             app.manage(tools_state);
-            app.manage(crate::wiki::local_site::LocalSiteManager::new());
             // devcontainer-core state for the new container controls
             // (start/stop/restart/rebuild/remove). Lives alongside the
             // legacy `LocalSiteManager` for now — callers can pick.
@@ -310,12 +309,6 @@ pub fn run() {
             wiki::git_commands::wiki_pull,
             wiki::git_commands::wiki_publish,
             wiki::git_commands::wiki_commit_and_maybe_publish,
-            wiki::git_commands::wiki_build_site,
-            // Local site preview (serve + watch inside Apple Container)
-            wiki::local_site::wiki_start_container,
-            wiki::local_site::wiki_stop_container,
-            wiki::local_site::wiki_container_status,
-            wiki::local_site::wiki_force_stop_container_service,
             // Generic per-wiki container controls (devcontainer-core).
             wiki::container_controls::wiki_container_ctl_status,
             wiki::container_controls::wiki_container_ctl_up,
@@ -348,83 +341,17 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
-                // Block the exit just long enough to stop any
-                // containers we started and (optionally) the Apple
-                // Container service. If foreign containers remain,
-                // ask the user before stopping the service.
-                let manager =
-                    match app_handle.try_state::<crate::wiki::local_site::LocalSiteManager>() {
-                        Some(m) => m,
-                        None => return,
-                    };
-                if !manager.has_pending_cleanup() {
-                    return;
-                }
-
-                api.prevent_exit();
-
-                // Tell the dashboard to show a full-screen "Shutting
-                // down…" overlay so the user has feedback while we
-                // stop containers (which can take several seconds).
-                if let Some(dash) = app_handle
-                    .get_webview_window(crate::commands::DASHBOARD_LABEL)
-                {
-                    let _ = dash.unminimize();
-                    let _ = dash.show();
-                    let _ = dash.set_focus();
-                    let _ = dash.emit("wiki3://shutdown-begin", ());
-                }
-
-                let handle = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    let manager =
-                        handle.state::<crate::wiki::local_site::LocalSiteManager>();
-                    let report =
-                        crate::wiki::local_site::shutdown_all(manager.inner()).await;
-
-                    if !report.foreign_containers.is_empty()
-                        && report.service_started_by_us
-                        && !report.service_stopped
-                    {
-                        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
-                        let list = report.foreign_containers.join("\n  • ");
-                        let msg = format!(
-                            "Wiki3 started the Apple Container service this session.\n\n\
-                             The following containers were not started by Wiki3 and are \
-                             still running:\n  • {list}\n\n\
-                             Stop the container service anyway? (This will also stop those \
-                             containers.)"
-                        );
-                        let stop_anyway = handle
-                            .dialog()
-                            .message(msg)
-                            .title("Stop Apple Container service?")
-                            .kind(MessageDialogKind::Warning)
-                            .buttons(MessageDialogButtons::OkCancelCustom(
-                                "Stop anyway".into(),
-                                "Leave running".into(),
-                            ))
-                            .blocking_show();
-                        if stop_anyway {
-                            if let Err(e) = crate::wiki::local_site::force_stop_service(
-                                handle.state::<crate::wiki::local_site::LocalSiteManager>()
-                                    .inner(),
-                            )
-                            .await
-                            {
-                                log::warn!("force_stop_service failed: {e}");
-                            }
-                        }
-                    }
-                    for e in &report.errors {
-                        log::warn!("shutdown: {e}");
-                    }
-
-                    handle.exit(0);
-                });
-            }
+        .run(|_app_handle, _event| {
+            // Quit needs no teardown of its own.
+            //
+            // Exit used to be intercepted to stop the per-wiki containers and
+            // optionally the Apple Container service, with a dialog about
+            // "foreign" containers. That machinery belonged to the legacy
+            // Apple `Serve` path: it only ran when `LocalSiteManager` had
+            // pending cleanup, which nothing has populated since the container
+            // controls moved onto `devcontainer-core`. Containers started
+            // through the orchestrator are left running deliberately, so the
+            // next launch can adopt them rather than paying for a rebuild.
         });
 }
 

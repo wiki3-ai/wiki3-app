@@ -1,83 +1,74 @@
-# Devcontainer parsing — the two paths, why they exist, and how to change them
+# Devcontainer parsing — one parser, and how to change it
 
-Last updated 2026-09-13 while adding the runtime compatibility gate.
+Last updated 2026-09-13, when the legacy parser was deleted.
 
-There are **two independent code paths** that read
-`.devcontainer/devcontainer.json`. This is not an accident, but it is also
-not finished work: one is the predecessor of the other, and the older one
-is still load-bearing for a live feature.
+`devcontainer.json` is parsed in **one** place: the prebuilt engine bundle in
+`src/public/`, built from the upstream `@devcontainers/cli` spec slice. The
+result is submitted to `devcontainer-core`'s `LifecycleOrchestrator`, and every
+other consumer reads it back from there.
 
 If you only read one section, read [Changing the parsed contract](#changing-the-parsed-contract)
 — getting that wrong fails silently.
 
 ## TL;DR
 
-| | Legacy *preview* path | Devcontainer *lifecycle* path |
-|---|---|---|
-| Parser | `src-tauri/src/tools/devcontainer_config.js`, run in-process by **rquickjs** | prebuilt `src/public/devcontainer-engine.js`, built from the upstream `@devcontainers/cli` spec slice |
-| Rust shape | `tools::devcontainer_config::DevcontainerConfig` | `devcontainer_core::ParsedDevContainer` |
-| Drives | per-wiki **Build / Serve / Stop** preview container | `wiki_container_ctl_*` (start / stop / restart / rebuild / remove) |
-| Runtime | the Apple `container` CLI, invoked directly | pluggable `ContainerRuntime` (`apple_containers` / `docker` / `podman`) |
-| Entry point | `tools::devcontainer_image::ensure_devcontainer_image`, called from `wiki/local_site.rs` | `commands_devcontainer.rs::submit_parsed_devcontainer` → `LifecycleOrchestrator` |
+| | |
+|---|---|
+| Parser | prebuilt `src/public/devcontainer-engine.js`, built from the upstream `@devcontainers/cli` spec slice |
+| Rust shape | `devcontainer_core::ParsedDevContainer` |
+| Runtime | pluggable `ContainerRuntime` (`apple_containers` / `docker` / `podman`) |
+| Entry point | `commands_devcontainer.rs::submit_parsed_devcontainer` → `LifecycleOrchestrator` |
+| Read back | `LifecycleOrchestrator::parsed_config()` |
 
-Both are alive. Neither is dead code.
+The dashboard submits every wiki's config at startup (`submitAllDevcontainers()`
+in `src/main.ts`), because the host cannot parse for itself. Without that, the
+port panel would be empty for a container created in an earlier session until
+the user happened to Start or Restart something.
 
-## History — why there are two
+## What used to be here
 
-The older path is genuinely a leftover of a superseded approach, in this
-order:
+There was a second path: an inlined JavaScript module
+(`tools/devcontainer_config.{rs,js}`) run in-process by **rquickjs**, driving
+the Apple `container` CLI directly to serve the per-wiki **Build / Serve /
+Stop** preview. It arrived in this order, and outlived its own replacement:
 
 1. **2026-04-21 `d64f85a`** — "Remove Deno stuff and use rquickjs to run
-   devcontainers code". The devcontainers parsing was inlined into the
-   binary as a JavaScript module run by an embedded QuickJS interpreter,
-   so the app shipped no external toolchain.
+   devcontainers code". Parsing was inlined so the app shipped no external
+   toolchain.
 2. **2026-04-29 `f116b12`** — "Adopt devcontainer-core's apple_containers
-   helpers". The container work starts moving into the reusable
-   `devcontainer-core` crate.
-3. **2026-04-30 `4e51301`** — "Use the devcontainer-cli code from core".
-   The prebuilt engine bundle replaces the inlined-JS approach.
+   helpers". Container work starts moving into the reusable crate.
+3. **2026-04-30 `4e51301`** — "Use the devcontainer-cli code from core". The
+   prebuilt engine bundle replaces the inlined-JS approach.
 
-So the rquickjs parser is the **predecessor** of the bundle, and the
-per-wiki preview feature was never migrated off it. The step-1 rationale is
-also no longer true: we now do ship a build of the upstream spec slice (as
-a prebuilt ES module, not as a Deno toolchain).
+The preview feature was simply never migrated off it, so it lingered as a
+second opinion about the same file. Its `DevcontainerConfig` was also a
+hand-rolled *subset*: it declared `image`, `build`, `forwardPorts`,
+`remoteUser` and `customizations`, but **not** `mounts` or `runArgs`, even
+though the JS emitted both — serde dropped them silently, with no error. That
+is the same class of bug the compatibility gate exists to prevent, and it is
+why the path was deleted rather than extended.
 
-## Why the legacy path can't just be deleted
+Removed: `tools/devcontainer_config.{rs,js}`, `tools/devcontainer_image.rs`,
+`wiki/local_site.rs`, the `wiki_build_site` / `wiki_start_container` /
+`wiki_stop_container` / `wiki_container_status` /
+`wiki_force_stop_container_service` commands, the quit-time teardown and its
+"foreign containers" dialog, and the `rquickjs` dependency.
 
-Two reasons, one practical and one strategic:
+## Apple-specific code that remains, deliberately
 
-1. **It is load-bearing.** `Build` / `Serve` / `Stop` on a wiki card runs
-   through `tools::devcontainer_image::ensure_devcontainer_image`
-   (via `wiki/local_site.rs`), which parses with
-   `tools::devcontainer_config`. Deleting the parser takes the per-wiki
-   preview feature with it.
-2. **It cannot serve the Docker work.** It drives the Apple `container`
-   CLI directly (`apple_container::ensure_service_running`,
-   `is_service_running`, and raw `Command::new(&container_bin)` calls in
-   `wiki/git_commands.rs` and `wiki/local_site.rs`). There is no runtime
-   seam, so no Docker or Podman backend can plug into it.
+Two things still name Apple Container, and both concern *reaching* a
+container rather than parsing a config:
 
-Its `DevcontainerConfig` struct is also a hand-rolled *subset* parser: it
-declares `image`, `build`, `forwardPorts`, `remoteUser`, and
-`customizations`, but **not** `mounts` or `runArgs` — even though
-`devcontainer_config.js` emits both. Serde drops unknown fields silently,
-so those settings vanish with no error. That is the same class of bug the
-compatibility gate exists to prevent, and it is a good argument for
-retiring this path rather than extending it.
+- `tools/apple_container.rs` — detection for the Tools dialog, plus
+  `inspect_container_ipv4`.
+- The port poller's vmnet fallback in `wiki/ports.rs` and `wiki/forwarder.rs`,
+  which tunnels loopback to the container's vmnet address. This exists for
+  corp-managed macOS hosts where a network filter accept-then-RSTs Apple's
+  loopback publish-proxy, leaving the port unreachable on `127.0.0.1` even
+  though the container is healthy. It is gated on the effective runtime
+  actually being Apple Containers, so Docker and Podman never pay for it.
 
-## Migration plan
-
-Keep the legacy path as-is while the Docker/Podman backends land, because
-that work is orthogonal to it. Once a non-Apple runtime can actually run a
-container:
-
-1. Move `Build` / `Serve` / `Stop` onto `devcontainer-core`'s
-   `LifecycleOrchestrator` and `ContainerRuntime`.
-2. Delete `tools/devcontainer_config.{rs,js}`,
-   `tools/devcontainer_image.rs`, and the direct-CLI container code in
-   `wiki/git_commands.rs` / `wiki/local_site.rs`.
-3. Fix the field-dropping subset semantics by construction — they go away
-   with the parser.
+If Apple Containers is ever dropped, both go with it.
 
 ## The engine bundle
 

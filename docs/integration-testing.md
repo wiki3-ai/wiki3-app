@@ -1,5 +1,23 @@
 # Integration Testing — Plan & Constraints
 
+> **OBSOLETE as of 2026-09-13 — kept for the lesson, not the plan.**
+>
+> Everything below concerns the quit/cleanup path, which no longer exists.
+> Exit was intercepted to stop per-wiki containers and optionally the Apple
+> Container service; that machinery went with the legacy Apple `Serve` path
+> (`wiki/local_site.rs`, `wiki/git_commands.rs::wiki_build_site`, the
+> `wiki_start_container` / `wiki_stop_container` / `wiki_container_status` /
+> `wiki_force_stop_container_service` commands, and the
+> `wiki3://shutdown-begin` event). Containers started through
+> `devcontainer-core` are now deliberately left running across a quit so the
+> next launch adopts them instead of rebuilding.
+>
+> The generalisable lesson still stands and is the reason to keep the file:
+> a predefined macOS Quit item routed through `NSApplication.terminate(_:)`
+> and bypassed Tauri's `RunEvent::ExitRequested`, so cleanup silently did not
+> run. Any future quit-time work needs a test that exercises the *menu*, not
+> just the handler — manual clicking missed it twice.
+
 Written 2026-04-26 after the `.quit()` menu-item shutdown bug, where
 the predefined macOS Quit item bypassed Tauri's `RunEvent::ExitRequested`
 and skipped our container cleanup. Manual verification missed it
@@ -149,9 +167,9 @@ When we come back to this:
 - `apple_container::detect()` already takes the `container` binary
   off `$PATH` (no hardcoded path), so a `PATH`-prefix shim drops in
   cleanly.
-- `LocalSiteManager::has_pending_cleanup` and the
-  `wiki3://shutdown-begin` event give a stable signal we can
-  observe from a fake binary's log.
+- ~~`LocalSiteManager::has_pending_cleanup` and the
+  `wiki3://shutdown-begin` event~~ — both removed with the legacy path;
+  there is no quit-time work left to observe.
 
 ## What NOT to do
 
