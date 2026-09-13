@@ -997,6 +997,37 @@ async function ensureDevcontainerSubmitted(wikiId: string): Promise<void> {
   await loadAndSubmitDevcontainer(wikiId, w.local_path);
 }
 
+/**
+ * Start preview containers for wikis marked "Autostart Container".
+ *
+ * This lives in the dashboard rather than in Rust `setup()` because starting
+ * a container needs the parsed `devcontainer.json`, and the parsing lives in
+ * the frontend engine bundle. The old Rust autostart worked around that by
+ * driving the Apple Container CLI directly, so with Docker or Podman selected
+ * it could only fail. Going through the same submit-then-up sequence as the
+ * Start button makes autostart runtime-agnostic with no extra machinery.
+ *
+ * Sequential on purpose: starting several wikis at once would build several
+ * images concurrently and interleave their logs.
+ */
+async function autostartContainers(): Promise<void> {
+  const targets = wikis.filter((w) => w.autostart_container && w.local_path);
+  for (const w of targets) {
+    containerCtlInFlight.add(w.id);
+    render();
+    try {
+      await ensureDevcontainerSubmitted(w.id);
+      containerCtlStatuses.set(w.id, await wikiApi.wikiContainerCtlUp(w.id));
+    } catch (err) {
+      // One wiki failing to start must not stop the others.
+      console.warn(`[wiki3-app] autostart failed for ${w.name}:`, err);
+    } finally {
+      containerCtlInFlight.delete(w.id);
+      render();
+    }
+  }
+}
+
 async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
   const action = target.getAttribute('data-action');
   if (!action) return;
@@ -1473,6 +1504,11 @@ async function init(): Promise<void> {
   }
 
   await refresh();
+
+  // Start any container the user asked to autostart. Deliberately after the
+  // first `refresh()` (so `wikis` is populated) and deliberately not awaited,
+  // so the dashboard stays responsive while images build.
+  void autostartContainers();
 
   // Periodic refresh of window state in case of external changes.
   window.setInterval(() => {

@@ -137,40 +137,13 @@ pub fn run() {
                 devcontainer_core::ProxyManager::with_bind(proxy_bind),
             ));
 
-            // Autostart per-wiki preview containers for any wikis with
-            // `autostart_container = true` and a still-existing local
-            // path. Spawn each on the Tokio runtime so app launch is
-            // not blocked by container/image setup.
-            {
-                let wiki_state = app.state::<WikiState>();
-                if let Ok(wikis) = wiki_state.manager.list() {
-                    for w in wikis
-                        .into_iter()
-                        .filter(|w| w.autostart_container)
-                    {
-                        let Some(path) = w
-                            .local_path
-                            .as_ref()
-                            .map(std::path::PathBuf::from)
-                            .filter(|p| p.exists())
-                        else {
-                            continue;
-                        };
-                        let handle = app.handle().clone();
-                        let id = w.id.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let mgr = handle.state::<crate::wiki::local_site::LocalSiteManager>();
-                            if let Err(e) = crate::wiki::local_site::start_site(
-                                &handle, mgr.inner(), &id, &path,
-                            )
-                            .await
-                            {
-                                log::warn!("autostart container for wiki {id} failed: {e}");
-                            }
-                        });
-                    }
-                }
-            }
+            // Autostart of per-wiki containers deliberately does NOT happen
+            // here. Starting one needs the parsed devcontainer, and parsing
+            // lives in the frontend engine bundle; the old Rust path worked
+            // around that by driving the Apple Container CLI directly, so
+            // with Docker or Podman selected it could only fail. The dashboard
+            // now runs it through the same submit-then-up sequence as the
+            // Start button (`autostartContainers()` in `src/main.ts`).
 
             // Install the native menu.
             match crate::menu::build_menu(app.handle()) {
