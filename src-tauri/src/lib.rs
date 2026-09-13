@@ -113,7 +113,18 @@ pub fn run() {
             // devcontainer-core state for the new container controls
             // (start/stop/restart/rebuild/remove). Lives alongside the
             // legacy `LocalSiteManager` for now — callers can pick.
-            app.manage(devcontainer_core::RuntimeRegistry::with_default_backends());
+            let registry = devcontainer_core::RuntimeRegistry::with_default_backends();
+            // Honour the runtime the user pinned last session. This has to
+            // happen before the registry is managed (and so before anything
+            // can call `resolve()`), or the first operation after launch
+            // would quietly use the availability default instead.
+            runtime_commands::restore_persisted_choice(
+                &registry,
+                app.state::<WindowStateManager>()
+                    .container_runtime()
+                    .as_deref(),
+            );
+            app.manage(registry);
             // Lazy-started internal caching proxy. We bind on a port
             // distinct from Devcontainers.app (31280) so both can run
             // concurrently and each see their own per-host stats.

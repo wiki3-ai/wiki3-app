@@ -29,6 +29,16 @@ pub struct AppSettings {
     /// Default base directory for new wiki clones (e.g. `~/Wiki3`).
     #[serde(default)]
     pub default_wikis_dir: Option<String>,
+    /// Pinned container runtime id (`docker`, `podman`, `apple-containers`),
+    /// or `None` to let availability decide.
+    ///
+    /// Stored as a string rather than a `RuntimeId` on purpose: an id this
+    /// build does not recognise — a runtime that was removed, or a choice made
+    /// by a newer build — then degrades to "automatic" instead of failing the
+    /// whole settings file to deserialize and taking every other setting with
+    /// it.
+    #[serde(default)]
+    pub container_runtime: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -37,6 +47,7 @@ impl Default for AppSettings {
             restore_windows: true,
             default_repo_url: DEFAULT_REPO_URL.to_string(),
             default_wikis_dir: None,
+            container_runtime: None,
         }
     }
 }
@@ -148,6 +159,21 @@ impl WindowStateManager {
     /// Whether window restore is enabled.
     pub fn should_restore(&self) -> bool {
         self.settings.lock().unwrap().restore_windows
+    }
+
+    /// The pinned container runtime id, if the user chose one.
+    pub fn container_runtime(&self) -> Option<String> {
+        self.settings.lock().unwrap().container_runtime.clone()
+    }
+
+    /// Persist the pinned container runtime (`None` = automatic).
+    pub fn set_container_runtime(&self, id: Option<String>) {
+        {
+            let mut settings = self.settings.lock().unwrap();
+            settings.container_runtime = id;
+        }
+        // Persist outside the lock — `persist()` acquires it too.
+        self.persist();
     }
 
     /// Get the next cascade position for a new window.
@@ -395,7 +421,39 @@ mod tests {
         assert_eq!(s.settings.default_wikis_dir, None);
         assert_eq!(s.settings.default_repo_url, "https://github.com/x/y");
     }
+    #[test]
+    fn container_runtime_survives_a_restart() {
+        let dir = tempdir().unwrap();
+        {
+            let m = WindowStateManager::new(dir.path().to_path_buf());
+            // A fresh install has no preference — availability decides.
+            assert_eq!(m.container_runtime(), None);
+            m.set_container_runtime(Some("podman".to_string()));
+        }
+        // A second manager reading the same directory stands in for a
+        // relaunch; this is the bug being fixed, so assert it directly.
+        let m2 = WindowStateManager::new(dir.path().to_path_buf());
+        assert_eq!(m2.container_runtime(), Some("podman".to_string()));
 
+        m2.set_container_runtime(None);
+        let m3 = WindowStateManager::new(dir.path().to_path_buf());
+        assert_eq!(m3.container_runtime(), None);
+    }
+
+    #[test]
+    fn setting_container_runtime_keeps_the_other_settings() {
+        // `set_container_runtime` rewrites the whole file, so a regression
+        // there would silently drop unrelated settings.
+        let dir = tempdir().unwrap();
+        let m = WindowStateManager::new(dir.path().to_path_buf());
+        m.set_container_runtime(Some("docker".to_string()));
+
+        let m2 = WindowStateManager::new(dir.path().to_path_buf());
+        let s = m2.settings.lock().unwrap().clone();
+        assert_eq!(s.container_runtime, Some("docker".to_string()));
+        assert_eq!(s.default_repo_url, DEFAULT_REPO_URL);
+        assert!(s.restore_windows);
+    }
     #[test]
     fn window_geometry_backcompat_missing_wiki_id_closed() {
         let json = r#"{
