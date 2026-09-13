@@ -27,10 +27,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{command, State};
 
-use devcontainer_core::ParsedDevContainer;
+use devcontainer_core::{ParsedDevContainer, RuntimeId, RuntimeRegistry};
 
 use crate::wiki::commands::WikiState;
-use crate::wiki::local_site::LocalSiteManager;
 
 /// How often the background poller re-probes each port while it
 /// is still searching for a working path.
@@ -258,21 +257,20 @@ async fn devcontainer_container_for(
         .map(|c| c.container_id)
 }
 
-/// Whether a container is still running for this wiki, judged by the most
-/// direct evidence available.
+/// Whether the runtime that would be used right now is Apple Containers.
 ///
-/// Conservative by design: `LocalSiteManager` is authoritative for the
-/// legacy Apple `Serve` flow (whose container the poller reaches by vmnet
-/// IP), so when it has an entry we report running and leave that path
-/// exactly as it was.
-async fn container_running_for(app: &tauri::AppHandle, wiki_id: &str, local_path: &Path) -> bool {
+/// Only Apple Containers need their vmnet address resolved: Docker and Podman
+/// publish forwarded ports on the host, so a loopback probe is enough and
+/// asking for an address that does not exist would just spawn a subprocess to
+/// fail every few seconds.
+async fn apple_runtime_selected(app: &tauri::AppHandle) -> bool {
     use tauri::Manager;
+    app.state::<RuntimeRegistry>().resolve().await.id() == RuntimeId::AppleContainers
+}
 
-    if let Some(site) = app.try_state::<LocalSiteManager>() {
-        if site.get(wiki_id).is_some() {
-            return true;
-        }
-    }
+/// Whether a container is still running for this wiki, according to the
+/// orchestrator.
+async fn container_running_for(app: &tauri::AppHandle, wiki_id: &str, local_path: &Path) -> bool {
     devcontainer_container_for(app, wiki_id, local_path)
         .await
         .is_some()
@@ -294,7 +292,6 @@ fn same_path(reported: &str, wanted: &Path) -> bool {
 
 /// state across brief poller restarts.
 async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: tauri::AppHandle) {
-    use tauri::Manager;
     eprintln!(
         "[port-poller] start wiki_id={wiki_id} path={}",
         local_path.display()
@@ -326,36 +323,18 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
         }
 
         // Resolve the running container's IPv4 only when we don't
-        // have a recent answer for the current container name. This
+        // have a recent answer for the current container. This
         // keeps `container inspect` calls down to roughly one every
         // few seconds (or immediately on container swap), instead
         // of one per probe tick.
         //
-        // We try `LocalSiteManager` first (cheap, in-memory) and
-        // fall back to `find_container_by_mount_source`, which
-        // walks `container ls --format json` and matches on the
-        // workspace path. The fallback is necessary because
-        // `LocalSiteManager` is process-local: if wiki3-app is
-        // restarted while the container is still running (very
-        // common with the bundled .app on a Tahoe machine), the
-        // map will be empty even though the container is healthy
-        // on its vmnet IP.
+        // The container name comes from the orchestrator, which is
+        // runtime-agnostic. It used to come from `LocalSiteManager`, which is
+        // process-local — empty after an app restart even though the container
+        // was still running, so the poller concluded "no container" and greyed
+        // out ports that were answering perfectly well.
         let container_ipv4 = {
-            let site_state = app.state::<LocalSiteManager>();
-            let site_name = site_state.get(&wiki_id).map(|s| s.serve_container);
-
-            // The devcontainer-controls path is runtime-agnostic and
-            // records its container with the orchestrator, not with
-            // `LocalSiteManager`. Asking only the Apple-specific sources
-            // therefore concludes "no container" for a Docker container —
-            // and the gate below then writes `Reachable::No` for every port
-            // *without probing at all*, leaving the dashboard permanently
-            // grey even though the ports are published and answering on
-            // loopback.
-            let known_name = match site_name.clone() {
-                Some(name) => Some(name),
-                None => devcontainer_container_for(&app, &wiki_id, &local_path).await,
-            };
+            let known_name = devcontainer_container_for(&app, &wiki_id, &local_path).await;
 
             let needs_refresh = last_inspect_at
                 .map(|t| t.elapsed() >= INSPECT_REFRESH_INTERVAL)
@@ -363,50 +342,22 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
                 || cached_for_container.as_deref() != known_name.as_deref();
 
             if needs_refresh {
-                if site_name.is_some() {
-                    // Legacy Apple `Serve` flow: resolve the container's
-                    // vmnet IPv4 so the Direct fallback works when the
-                    // publish-proxy is broken.
-                    let bin = crate::tools::apple_container::detect()
-                        .path
-                        .unwrap_or_else(|| std::path::PathBuf::from("container"));
-                    let name = known_name.clone().unwrap_or_default();
-                    cached_ip = crate::tools::apple_container::inspect_container_ipv4(&bin, &name)
-                        .await
-                        .and_then(|s| s.parse::<Ipv4Addr>().ok());
-                    cached_for_container = Some(name);
-                } else if let Some(name) = known_name {
-                    // A container from the devcontainer-controls path.
-                    // Docker and Podman publish their ports on the host, so
-                    // a loopback probe is sufficient and there is no vmnet
-                    // address to resolve. Apple Containers reached through
-                    // this path still work over loopback or the
-                    // publish-proxy.
-                    cached_ip = None;
-                    cached_for_container = Some(name);
-                } else {
-                    // Last resort: the legacy Apple discovery by mount
-                    // source. One `container ls` per refresh interval —
-                    // the same load profile as inspecting a known name.
-                    let bin = crate::tools::apple_container::detect()
-                        .path
-                        .unwrap_or_else(|| std::path::PathBuf::from("container"));
-                    match crate::tools::apple_container::find_container_by_mount_source(
-                        &bin,
-                        &local_path,
-                    )
-                    .await
-                    {
-                        Some((name, ipv4)) => {
-                            cached_ip = ipv4.parse::<Ipv4Addr>().ok();
-                            cached_for_container = Some(name);
-                        }
-                        None => {
-                            cached_ip = None;
-                            cached_for_container = None;
-                        }
+                cached_ip = match &known_name {
+                    // Apple Containers are the only runtime that needs this:
+                    // its vmnet address is the fallback when the loopback
+                    // publish-proxy is broken (see the module docs). Docker
+                    // and Podman publish on the host and need no address.
+                    Some(name) if apple_runtime_selected(&app).await => {
+                        let bin = crate::tools::apple_container::detect()
+                            .path
+                            .unwrap_or_else(|| std::path::PathBuf::from("container"));
+                        crate::tools::apple_container::inspect_container_ipv4(&bin, name)
+                            .await
+                            .and_then(|s| s.parse::<Ipv4Addr>().ok())
                     }
-                }
+                    _ => None,
+                };
+                cached_for_container = known_name;
                 last_inspect_at = Some(Instant::now());
             }
             cached_ip
@@ -1218,7 +1169,11 @@ mod tests {
             ports_attributes: Some(serde_json::Value::Object(attrs)),
             ..Default::default()
         };
-        let rows = rows_from_cache(wiki_id, Path::new("/tmp/test-port-label"), Some(&with_extra));
+        let rows = rows_from_cache(
+            wiki_id,
+            Path::new("/tmp/test-port-label"),
+            Some(&with_extra),
+        );
         assert_eq!(rows[0].label.as_deref(), Some("Dashboard"));
 
         evict(wiki_id);
