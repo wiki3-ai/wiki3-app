@@ -109,11 +109,7 @@ async fn build_report(app: Option<&tauri::AppHandle>) -> String {
     capture(
         &mut buf,
         "lsof for wiki3-app PID",
-        &[
-            "sh",
-            "-c",
-            &format!("lsof -nP -iTCP -p {pid} 2>&1 || true"),
-        ],
+        &["sh", "-c", &format!("lsof -nP -iTCP -p {pid} 2>&1 || true")],
     )
     .await;
     capture(
@@ -509,8 +505,14 @@ async fn self_test_loopback(buf: &mut String) {
 /// path so we can tell apart "the proxy is broken everywhere" from
 /// "only the loopback path is broken".
 async fn primary_lan_ipv4() -> Option<Ipv4Addr> {
-    let out = capture_string("sh", &["-c", "route -n get default 2>/dev/null | awk '/interface:/ {print $2}'"])
-        .await?;
+    let out = capture_string(
+        "sh",
+        &[
+            "-c",
+            "route -n get default 2>/dev/null | awk '/interface:/ {print $2}'",
+        ],
+    )
+    .await?;
     let iface = out.trim();
     if iface.is_empty() {
         return None;

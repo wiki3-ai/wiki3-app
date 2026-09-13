@@ -317,9 +317,7 @@ mod tests {
                         let _ = s.set_read_timeout(Some(Duration::from_millis(100)));
                         let mut buf = [0u8; 256];
                         let _ = s.read(&mut buf);
-                        let _ = s.write_all(
-                            b"HTTP/1.0 200 OK\r\nContent-Length: 7\r\n\r\nHELLO!!",
-                        );
+                        let _ = s.write_all(b"HTTP/1.0 200 OK\r\nContent-Length: 7\r\n\r\nHELLO!!");
                         let _ = s.flush();
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -353,8 +351,14 @@ mod tests {
         let body = tokio::task::spawn_blocking(move || drive_request(local).unwrap())
             .await
             .unwrap();
-        assert!(body.contains("200 OK"), "expected proxied response, got: {body}");
-        assert!(body.contains("HELLO!!"), "expected proxied body, got: {body}");
+        assert!(
+            body.contains("200 OK"),
+            "expected proxied response, got: {body}"
+        );
+        assert!(
+            body.contains("HELLO!!"),
+            "expected proxied body, got: {body}"
+        );
 
         stop("test-fwd-basic", target.port());
         stop_be.store(true, Ordering::SeqCst);
