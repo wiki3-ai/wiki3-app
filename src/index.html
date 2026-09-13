@@ -113,21 +113,18 @@
       .w3-muted { color: #666; }
       .w3-error { color: #cc3300; }
       .w3-actions { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
-      /* The runtime picker is mounted into the action row (see `render()`).
-         Styled to sit alongside the buttons rather than shout over them. */
-      .w3-runtime-picker { display: inline-flex; align-items: center; gap: 6px; }
-      .w3-runtime-picker > label { font-size: 13px; color: #666; font-weight: 500; }
-      .w3-runtime-picker > select {
-        padding: 8px 10px;
-        border: 1px solid #d0d0d0;
-        border-radius: 6px;
-        background: #fff;
-        font-size: 13px;
-        font-weight: 500;
-        cursor: pointer;
-        max-width: 240px;
+      /* Rows in the runtime chooser dialog. */
+      .w3-runtime-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid #eee;
       }
-      .w3-runtime-status { font-size: 12px; color: #666; }
+      .w3-runtime-row:last-child { border-bottom: none; }
+      .w3-runtime-row-text { flex: 1; min-width: 0; }
+      .w3-runtime-row-name { font-weight: 500; }
+      .w3-runtime-row-detail { font-size: 12px; word-break: break-word; }
       .w3-btn {
         padding: 8px 16px;
         border: 1px solid #d0d0d0;

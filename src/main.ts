@@ -182,10 +182,9 @@ function render(): void {
           <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
           <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
           <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
-          <span id="w3-runtime-slot"></span>
+          <button class="w3-btn" data-action="runtime" title="Which container engine Wiki3 uses for every wiki">${runtimeButtonLabel()}</button>
         </div>
       </div>`;
-    mountRuntimePicker();
     return;
   }
 
@@ -196,12 +195,11 @@ function render(): void {
       <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
       <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
       <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
-      <span id="w3-runtime-slot"></span>
+      <button class="w3-btn" data-action="runtime" title="Which container engine Wiki3 uses for every wiki">${runtimeButtonLabel()}</button>
     </div>
     <div class="w3-workspace-list" id="w3-wiki-list">${cards}</div>
   `;
   wireDragAndDrop();
-  mountRuntimePicker();
 }
 
 // ── Drag-and-drop reorder ────────────────────────────────────────────────
@@ -1085,6 +1083,9 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
       case 'open-tools':
         await openToolsDialog();
         break;
+      case 'runtime':
+        await openRuntimeDialog();
+        break;
       case 'toggle-logs':
         setLogsVisible(!logsVisible());
         break;
@@ -1348,125 +1349,170 @@ async function handleMenuAction(id: string): Promise<void> {
   }
 }
 
-// ── Init ─────────────────────────────────────────────────────────────────
+// ── Runtime selection ─────────────────────────────────────────────────────
 
 /**
- * Global runtime picker.
- *
- * The control lives in the dashboard's action row, which `render()` rebuilds
- * wholesale every 4 seconds. Recreating it each pass would drop the change
- * listener and — worse — snap the dropdown shut while the user is picking from
- * it. So the element is built once and *moved* into the freshly rendered slot;
- * `appendChild` relocates an existing node without disturbing the node, its
- * listener, or its open state.
- *
- * Deliberately *not* refreshed by the 4s dashboard poll: building the list
- * probes every engine (one `--version` process each), and the backend
- * registry memoises its automatic choice anyway, so polling would cost three
- * processes every 4 seconds to learn nothing. Fetched at startup and after a
- * selection change.
+ * Label for the action-row button, e.g. "Runtime: Docker…". Naming the
+ * effective engine on the button keeps "which runtime am I actually using"
+ * visible without opening anything — most of what the old inline picker was
+ * for, with no open state to lose.
  */
-let runtimePickerEl: HTMLSpanElement | null = null;
-let runtimeSelectEl: HTMLSelectElement | null = null;
-let runtimeStatusEl: HTMLSpanElement | null = null;
+let runtimeSummary: string | null = null;
 
-function buildRuntimePicker(): HTMLSpanElement {
-  const wrap = document.createElement('span');
-  wrap.className = 'w3-runtime-picker';
-
-  const label = document.createElement('label');
-  label.textContent = 'Runtime';
-  label.htmlFor = 'w3-runtime-select';
-
-  const select = document.createElement('select');
-  select.id = 'w3-runtime-select';
-  select.title = 'Which container engine Wiki3 should use for every wiki';
-
-  const status = document.createElement('span');
-  status.className = 'w3-runtime-status';
-
-  wrap.append(label, select, status);
-  runtimeSelectEl = select;
-  runtimeStatusEl = status;
-  return wrap;
+function runtimeButtonLabel(): string {
+  return runtimeSummary ? `Runtime: ${runtimeSummary}…` : 'Runtime…';
 }
 
 /**
- * Re-attach the picker to the slot the most recent `render()` produced. The
- * old slot is destroyed with the rest of `main`'s children, so this is what
- * keeps the control on screen across refreshes.
+ * Cache the effective runtime for the button label.
+ *
+ * Deliberately *not* refreshed by the 4s dashboard poll: listing runtimes
+ * probes every engine (one `--version` process each), and the backend registry
+ * memoises its automatic choice anyway, so polling would cost three processes
+ * every 4 seconds to learn nothing. Read at startup and after a change.
  */
-function mountRuntimePicker(): void {
-  if (!runtimePickerEl) return;
-  const slot = document.getElementById('w3-runtime-slot');
-  if (slot && runtimePickerEl.parentElement !== slot) slot.appendChild(runtimePickerEl);
+async function refreshRuntimeSummary(): Promise<void> {
+  let list: wikiApi.RuntimeInfo[];
+  try {
+    list = await wikiApi.runtimeList();
+  } catch {
+    // Leave the button generic; the dialog surfaces the real error.
+    return;
+  }
+  const effective = list.find((r) => r.effective);
+  const next = effective ? effective.label : 'none installed';
+  if (next === runtimeSummary) return;
+  runtimeSummary = next;
+  // Repaint so the button picks up the new label. Not recursive: `render()`
+  // never calls back into here.
+  render();
 }
 
-function initRuntimePicker(): void {
-  if (!runtimePickerEl) runtimePickerEl = buildRuntimePicker();
-  const select = runtimeSelectEl;
-  if (!select) return;
+/**
+ * Runtime chooser.
+ *
+ * A dialog rather than an inline `<select>`: the action row is rebuilt by
+ * `render()` every 4 seconds, and re-parenting a focused `<select>` into the
+ * new row detaches it, which closes its popup — so the dropdown collapsed
+ * under the user mid-choice. A button has no open state to lose, and the
+ * dialog it opens lives outside `main`, so refreshes cannot reach it.
+ */
+async function openRuntimeDialog(): Promise<void> {
+  const dlg = showDialog(`
+    <h3>Container Runtime</h3>
+    <p class="w3-muted" style="font-size:13px;margin-bottom:12px;">
+      The engine Wiki3 uses for every wiki's devcontainer.
+      <em>Automatic</em> prefers Docker, then Podman, then Apple Containers.
+    </p>
+    <div id="w3-runtime-body" style="font-size:13px;">
+      <div class="w3-muted">Detecting installed runtimes…</div>
+    </div>
+    <div class="w3-dialog-status" id="w3-runtime-note" style="display:none;margin-top:12px;"></div>
+    <div class="w3-dialog-actions">
+      <button type="button" class="w3-btn" data-runtime-act="close">Close</button>
+    </div>`);
 
-  select.addEventListener('change', () => {
-    const value = select.value;
+  const body = dlg.querySelector('#w3-runtime-body') as HTMLElement;
+  const note = dlg.querySelector('#w3-runtime-note') as HTMLElement;
+  (dlg.querySelector('[data-runtime-act="close"]') as HTMLButtonElement).addEventListener('click', () =>
+    dlg.remove(),
+  );
+
+  const row = (o: {
+    id: string;
+    title: string;
+    detail: string;
+    chosen: boolean;
+    effective: boolean;
+  }): string => `
+    <div class="w3-runtime-row">
+      <div class="w3-runtime-row-text">
+        <div class="w3-runtime-row-name">${escapeHtml(o.title)}${
+          o.effective ? ' <span class="w3-muted" style="font-weight:400;">— in use</span>' : ''
+        }</div>
+        <div class="w3-muted w3-runtime-row-detail">${escapeHtml(o.detail)}</div>
+      </div>
+      ${
+        o.chosen
+          ? '<button type="button" class="w3-btn w3-btn-sm" disabled>Selected</button>'
+          : `<button type="button" class="w3-btn w3-btn-sm" data-runtime-id="${escapeHtml(o.id)}">Use</button>`
+      }
+    </div>`;
+
+  const load = async (): Promise<void> => {
+    let list: wikiApi.RuntimeInfo[];
+    try {
+      list = await wikiApi.runtimeList();
+    } catch (err) {
+      body.innerHTML = `<div class="w3-error">Could not detect runtimes: ${escapeHtml(String(err))}</div>`;
+      return;
+    }
+    const pinned = list.find((r) => r.selected);
+    const effective = list.find((r) => r.effective);
+    body.innerHTML = [
+      row({
+        id: '',
+        title: 'Automatic',
+        detail:
+          !pinned && effective
+            ? `Currently using ${effective.label}`
+            : `First installed of: ${list.map((r) => r.label).join(', ')}`,
+        chosen: !pinned,
+        // Only the resolved engine gets "— in use"; marking both this row and
+        // its target would read as two runtimes being active at once.
+        effective: false,
+      }),
+      ...list.map((r) =>
+        row({
+          id: r.id,
+          // Unavailable engines stay listed: "Docker is not installed" is
+          // information the user needs, and hiding the row makes a missing
+          // engine look like a bug. The reason doubles as the detail line,
+          // and we still allow pinning one — the user may be about to start
+          // Docker Desktop or `podman machine`, and the failure they then get
+          // names what is missing.
+          title: r.available ? r.label : `${r.label} — not installed`,
+          detail: r.version ?? r.reason ?? '',
+          chosen: pinned?.id === r.id,
+          effective: r.effective,
+        }),
+      ),
+    ].join('');
+  };
+
+  // One listener on the container, not per row: `load()` replaces the rows, so
+  // per-button handlers would be lost on the first refresh.
+  body.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>('[data-runtime-id]');
+    if (!btn) return;
     void (async () => {
+      const id = btn.getAttribute('data-runtime-id') ?? '';
+      note.style.display = 'none';
+      note.classList.remove('w3-error');
       try {
-        // An empty value means "Automatic" — hand the decision back.
-        if (value) await wikiApi.runtimeSelect(value);
+        // An empty id means "Automatic" — hand the decision back.
+        if (id) await wikiApi.runtimeSelect(id);
         else await wikiApi.runtimeUseAuto();
+        await refreshRuntimeSummary();
+        await load();
       } catch (err) {
-        alert(`Could not change runtime: ${err}`);
-      } finally {
-        await refreshRuntimePicker();
+        note.style.display = 'block';
+        note.classList.add('w3-error');
+        note.textContent = `Could not change runtime: ${String(err)}`;
       }
     })();
   });
 
-  mountRuntimePicker();
-  void refreshRuntimePicker();
+  await load();
 }
 
-async function refreshRuntimePicker(): Promise<void> {
-  const select = runtimeSelectEl;
-  const status = runtimeStatusEl;
-  if (!select) return;
-
-  let list: wikiApi.RuntimeInfo[];
-  try {
-    list = await wikiApi.runtimeList();
-  } catch (err) {
-    if (status) status.textContent = `unavailable: ${err}`;
-    return;
-  }
-
-  const pinned = list.find((r) => r.selected);
-  const effective = list.find((r) => r.effective);
-
-  // Unavailable runtimes stay visible but disabled: "Docker is not installed"
-  // is information the user needs, and hiding it just makes the missing
-  // option look like a bug. The version (or the reason it is missing) goes in
-  // the tooltip rather than the label, which would otherwise be very long.
-  select.innerHTML = [
-    `<option value=""${pinned ? '' : ' selected'}>Automatic</option>`,
-    ...list.map((r) => {
-      const detail = r.version ?? r.reason ?? '';
-      const text = r.available ? r.label : `${r.label} — not installed`;
-      return `<option value="${escapeHtml(r.id)}"${pinned?.id === r.id ? ' selected' : ''}${
-        r.available ? '' : ' disabled'
-      } title="${escapeHtml(detail)}">${escapeHtml(text)}</option>`;
-    }),
-  ].join('');
-
-  if (status) {
-    status.textContent = effective ? `using ${effective.label}` : 'no runtime available';
-  }
-}
+// ── Init ─────────────────────────────────────────────────────────────────
 
 async function init(): Promise<void> {
   console.log('[wiki3-app] Dashboard loading…');
 
   initLogsPanel();
-  initRuntimePicker();
+  void refreshRuntimeSummary();
 
   // Delegated click handling on the page.
   document.addEventListener('click', (e) => {
