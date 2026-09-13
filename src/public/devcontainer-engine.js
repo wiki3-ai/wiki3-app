@@ -106225,6 +106225,7 @@ function toParsed(config3, configFilePath) {
     overrideCommand: c5.overrideCommand,
     mounts,
     forwardPorts,
+    portsAttributes: c5.portsAttributes,
     runArgs,
     remoteUser: c5.remoteUser,
     containerEnv: c5.containerEnv ?? {},

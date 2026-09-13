@@ -24,6 +24,12 @@ export interface ParsedDevContainer {
   overrideCommand?: boolean;
   mounts: string[];
   forwardPorts: number[];
+  /**
+   * `devcontainer.json` `portsAttributes`, keyed by port number as a string.
+   * Carried through verbatim; the host reads `label` and `protocol` from it to
+   * caption the port panel.
+   */
+  portsAttributes?: Record<string, unknown>;
   runArgs: string[];
   remoteUser?: string;
   containerEnv: Record<string, string>;

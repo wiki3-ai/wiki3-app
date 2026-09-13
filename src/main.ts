@@ -998,6 +998,27 @@ async function ensureDevcontainerSubmitted(wikiId: string): Promise<void> {
 }
 
 /**
+ * Register every wiki's parsed devcontainer with the host.
+ *
+ * The host no longer parses `devcontainer.json` itself — it reads whatever the
+ * dashboard submitted — so without this the port panel would stay empty for a
+ * wiki whose container was created in an earlier session, until the user
+ * happened to Start or Restart it.
+ *
+ * One parse per wiki, once per launch. Failures are logged and skipped: a wiki
+ * with a broken config must not stop the others from being registered.
+ */
+async function submitAllDevcontainers(): Promise<void> {
+  for (const w of wikis.filter((x) => x.local_path)) {
+    try {
+      await ensureDevcontainerSubmitted(w.id);
+    } catch (err) {
+      console.warn(`[wiki3-app] could not submit devcontainer for ${w.name}:`, err);
+    }
+  }
+}
+
+/**
  * Start preview containers for wikis marked "Autostart Container".
  *
  * This lives in the dashboard rather than in Rust `setup()` because starting
@@ -1505,10 +1526,14 @@ async function init(): Promise<void> {
 
   await refresh();
 
-  // Start any container the user asked to autostart. Deliberately after the
-  // first `refresh()` (so `wikis` is populated) and deliberately not awaited,
-  // so the dashboard stays responsive while images build.
-  void autostartContainers();
+  // Register every wiki's config with the host, then start any container the
+  // user asked to autostart. Deliberately after the first `refresh()` (so
+  // `wikis` is populated) and deliberately not awaited, so the dashboard stays
+  // responsive while images build and configs are parsed.
+  void (async () => {
+    await submitAllDevcontainers();
+    await autostartContainers();
+  })();
 
   // Periodic refresh of window state in case of external changes.
   window.setInterval(() => {

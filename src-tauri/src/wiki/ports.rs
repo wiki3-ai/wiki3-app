@@ -27,9 +27,8 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{command, State};
 
-use crate::tools::devcontainer_config::{
-    find_devcontainer_configs, load_config, DevcontainerConfig,
-};
+use devcontainer_core::ParsedDevContainer;
+
 use crate::wiki::commands::WikiState;
 use crate::wiki::local_site::LocalSiteManager;
 
@@ -414,9 +413,9 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
         };
 
         // Read the configured ports each tick rather than caching them,
-        // so an edit to `devcontainer.json` is picked up without a
-        // restart.
-        let ports = configured_ports(&local_path);
+        // so a re-submit (Start / Restart / Rebuild after an edit to
+        // `devcontainer.json`) is picked up without a restart.
+        let ports = configured_ports(submitted_config(&app, &wiki_id).as_ref());
         if ports.is_empty() {
             tokio::time::sleep(POLL_INTERVAL_FAST).await;
             continue;
@@ -570,88 +569,52 @@ fn keep_probing_after_settled() -> bool {
     )
 }
 
-// ── Parsed-config cache ──────────────────────────────────────────────────
+// ── Submitted config ─────────────────────────────────────────────────────
 
-/// A parsed `devcontainer.json` plus the file identity it was parsed from.
-struct CachedConfig {
-    modified: Option<std::time::SystemTime>,
-    len: u64,
-    config: Arc<DevcontainerConfig>,
+/// The config the container for `wiki_id` was created from, or `None` if the
+/// dashboard has not submitted one yet.
+///
+/// This is the single source of truth for "what ports does this wiki declare":
+/// the frontend engine parses `devcontainer.json` and hands the result to the
+/// orchestrator, and everything downstream reads it from there. Parsing again
+/// here would be a second opinion that could disagree with the config the
+/// container was actually made from.
+fn submitted_config(app: &tauri::AppHandle, wiki_id: &str) -> Option<ParsedDevContainer> {
+    use tauri::Manager;
+    app.state::<devcontainer_core::LifecycleOrchestrator>()
+        .parsed_config(wiki_id)
 }
 
-/// Memoised parses, keyed by absolute config path.
-static CONFIG_CACHE: OnceLock<Mutex<HashMap<std::path::PathBuf, CachedConfig>>> = OnceLock::new();
-
-/// Parse `path`, reusing a previous result when the file has not changed.
+/// Forwarded ports from a submitted config.
 ///
-/// `load_config` builds a *fresh* QuickJS runtime and context, evaluates the
-/// embedded resolver, then deserialises — and `wiki_container_ports` needs the
-/// answer for every wiki on every 4s dashboard tick. Un-memoised, the app was
-/// standing up a JS engine four times a minute per wiki to re-read a file that
-/// almost never changes.
-///
-/// Returns `None` on any IO or parse error, matching what the callers did when
-/// they parsed inline.
-fn load_config_cached(path: &Path) -> Option<Arc<DevcontainerConfig>> {
-    let (modified, len) = std::fs::metadata(path)
-        .map(|m| (m.modified().ok(), m.len()))
-        .unwrap_or((None, 0));
-
-    let cache = CONFIG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    // A poisoned lock is recovered from rather than propagated: a cache is not
-    // worth taking the port panel down for.
-    let mut guard = match cache.lock() {
-        Ok(g) => g,
-        Err(poisoned) => poisoned.into_inner(),
-    };
-
-    if let Some(hit) = guard.get(path) {
-        // Size is part of the key because mtime granularity is not guaranteed:
-        // a rewrite that changes the length is still detected if the timestamp
-        // has not moved.
-        if hit.modified == modified && hit.len == len {
-            return Some(Arc::clone(&hit.config));
-        }
-    }
-
-    let config = Arc::new(load_config(path).ok()?);
-    guard.insert(
-        path.to_path_buf(),
-        CachedConfig {
-            modified,
-            len,
-            config: Arc::clone(&config),
-        },
-    );
-    Some(config)
-}
-
-/// Read `devcontainer.json` and return the parsed list of forwarded
-/// ports. Returns an empty vec on any parse / IO error.
-fn configured_ports(local_path: &Path) -> Vec<u16> {
-    let configs = find_devcontainer_configs(local_path);
-    let Some(cfg_path) = configs.first() else {
-        return Vec::new();
-    };
-    let Some(cfg) = load_config_cached(cfg_path) else {
-        return Vec::new();
-    };
-    cfg.forward_ports.iter().filter_map(parse_port).collect()
+/// The engine's `toParsed` has already normalised `forwardPorts` — both the
+/// bare-integer and string forms — into validated `u16`s, so unlike the
+/// previous file-parsing version there is nothing to re-interpret here. An
+/// empty vec means "no config submitted yet" *or* "no ports declared";
+/// callers treat both as "nothing to show".
+fn configured_ports(parsed: Option<&ParsedDevContainer>) -> Vec<u16> {
+    parsed.map(|p| p.forward_ports.clone()).unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
 // Row building (cache → PortRow[])
 // ---------------------------------------------------------------------------
 
-/// Build port rows for `local_path` by reading its `devcontainer.json`
-/// and the cache populated by the background poller. Pure read — no
-/// network I/O happens here, so the Tauri command stays snappy.
-fn rows_from_cache(wiki_id: &str, local_path: &Path) -> Vec<PortRow> {
-    let configs = find_devcontainer_configs(local_path);
-    let Some(cfg_path) = configs.first() else {
-        return Vec::new();
-    };
-    let Some(cfg) = load_config_cached(cfg_path) else {
+/// Build port rows from the config the container was created from — see
+/// [`submitted_config`] — plus the reachability cache the poller feeds.
+///
+/// Pure read: no file I/O and no network I/O, so the Tauri command stays
+/// snappy.
+///
+/// `local_path` is only used to name the rows; the ports themselves come from
+/// the config, so the panel describes what the container was actually built
+/// from rather than whatever `devcontainer.json` says right now.
+fn rows_from_cache(
+    wiki_id: &str,
+    local_path: &Path,
+    parsed: Option<&ParsedDevContainer>,
+) -> Vec<PortRow> {
+    let Some(parsed) = parsed else {
         return Vec::new();
     };
 
@@ -662,9 +625,8 @@ fn rows_from_cache(wiki_id: &str, local_path: &Path) -> Vec<PortRow> {
         .to_string();
 
     let mut out = Vec::new();
-    for v in &cfg.forward_ports {
-        let Some(port) = parse_port(v) else { continue };
-        let attr = cfg
+    for &port in &parsed.forward_ports {
+        let attr = parsed
             .ports_attributes
             .as_ref()
             .and_then(|m| m.get(port.to_string()));
@@ -713,26 +675,6 @@ fn rows_from_cache(wiki_id: &str, local_path: &Path) -> Vec<PortRow> {
         });
     }
     out
-}
-
-/// Parse a single `forwardPorts` entry. Spec allows bare integers
-/// (`8000`) or strings (`"8000"`, `"host:8000"`, `"8000:8000"`); we
-/// treat the right-hand side as the container port.
-fn parse_port(v: &serde_json::Value) -> Option<u16> {
-    if let Some(n) = v.as_u64() {
-        if (1..=u16::MAX as u64).contains(&n) {
-            return Some(n as u16);
-        }
-    }
-    if let Some(s) = v.as_str() {
-        let tail = s.rsplit(':').next().unwrap_or(s);
-        if let Ok(n) = tail.trim().parse::<u16>() {
-            if n != 0 {
-                return Some(n);
-            }
-        }
-    }
-    None
 }
 
 /// Probe `<ip>:<port>` for an actually-working HTTP service.
@@ -845,7 +787,9 @@ pub async fn wiki_container_ports(
     // container still backs it. If not, drop the cache and release the claim
     // so the poller re-runs, finds no container and writes `No`. Skipped
     // entirely when nothing is green, so the steady state costs nothing.
-    if rows_from_cache(&wiki_id, &path).iter().any(|r| r.serving)
+    if rows_from_cache(&wiki_id, &path, submitted_config(&app, &wiki_id).as_ref())
+        .iter()
+        .any(|r| r.serving)
         && !container_running_for(&app, &wiki_id, &path).await
     {
         evict(&wiki_id);
@@ -875,7 +819,7 @@ pub async fn wiki_container_ports(
     // Pure read against the cache the poller is feeding — no probes
     // happen on the request path, so the dashboard never blocks on a
     // slow connect/RST cycle.
-    let rows = rows_from_cache(&wiki_id, &path);
+    let rows = rows_from_cache(&wiki_id, &path, submitted_config(&app, &wiki_id).as_ref());
     if rows.iter().any(|r| r.serving) {
         // Only log the "interesting" case — we don't want to spam
         // stderr on every 4s dashboard refresh while everything is
@@ -897,16 +841,6 @@ pub async fn wiki_container_ports(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_port_handles_int_and_string() {
-        assert_eq!(parse_port(&serde_json::json!(8000)), Some(8000));
-        assert_eq!(parse_port(&serde_json::json!("8000")), Some(8000));
-        assert_eq!(parse_port(&serde_json::json!("host:8000")), Some(8000));
-        assert_eq!(parse_port(&serde_json::json!("8000:8001")), Some(8001));
-        assert_eq!(parse_port(&serde_json::json!(0)), None);
-        assert_eq!(parse_port(&serde_json::json!("nope")), None);
-    }
 
     #[test]
     fn slugify_basics() {
@@ -1206,71 +1140,100 @@ mod tests {
         evict(wiki_id);
     }
 
+    /// A single-port config with optional attributes, standing in for what the
+    /// dashboard submits.
+    fn parsed_with_port(port: u16, label: Option<&str>) -> ParsedDevContainer {
+        let attrs = label.map(|l| {
+            let mut m = serde_json::Map::new();
+            m.insert(
+                port.to_string(),
+                serde_json::json!({ "label": l, "protocol": "http" }),
+            );
+            serde_json::Value::Object(m)
+        });
+        ParsedDevContainer {
+            forward_ports: vec![port],
+            ports_attributes: attrs,
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn config_cache_returns_a_fresh_parse_when_the_file_changes() {
-        // The cache exists to avoid re-parsing an unchanged file, so the one
-        // thing it must never do is serve a stale config after an edit — the
-        // user would edit `forwardPorts` and watch the port panel ignore it.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        // `find_devcontainer_configs` looks under `.devcontainer/`, so the
-        // file has to live there for `configured_ports` to see it.
-        let dc = tmp.path().join(".devcontainer");
-        std::fs::create_dir_all(&dc).unwrap();
-        let cfg_path = dc.join("devcontainer.json");
+    fn rows_follow_the_submitted_config_not_the_file_on_disk() {
+        // The panel describes the config the container was created from,
+        // because a container still running on the old config should not be
+        // documented by a file the user is part-way through editing.
+        let wiki_id = "test-submitted-config";
+        let path = Path::new("/tmp/test-submitted-config");
+        evict(wiki_id);
 
-        std::fs::write(
-            &cfg_path,
-            r#"{ "image": "scratch", "forwardPorts": [1111] }"#,
-        )
-        .unwrap();
-        let first = load_config_cached(&cfg_path).expect("first parse");
-        assert_eq!(configured_ports(tmp.path()), vec![1111]);
+        let ports = |parsed: Option<&ParsedDevContainer>| {
+            rows_from_cache(wiki_id, path, parsed)
+                .iter()
+                .map(|r| r.external)
+                .collect::<Vec<_>>()
+        };
 
-        // Same file, unchanged: the memoised parse is reused.
-        let again = load_config_cached(&cfg_path).expect("cached parse");
-        assert!(Arc::ptr_eq(&first, &again), "unchanged file was re-parsed");
+        assert_eq!(ports(Some(&parsed_with_port(1111, None))), vec![1111]);
 
-        // Rewritten with a longer body, so the size component of the key
-        // differs even if the mtime granularity is coarse.
-        std::fs::write(
-            &cfg_path,
-            r#"{ "image": "scratch", "forwardPorts": [2222, 3333] }"#,
-        )
-        .unwrap();
-        let updated = load_config_cached(&cfg_path).expect("re-parse");
-        assert!(
-            !Arc::ptr_eq(&first, &updated),
-            "changed file was not re-parsed"
+        // Re-submitting — which Start / Restart / Rebuild do after a config
+        // change — is what moves the rows.
+        let changed = ParsedDevContainer {
+            forward_ports: vec![2222, 3333],
+            ..Default::default()
+        };
+        assert_eq!(ports(Some(&changed)), vec![2222, 3333]);
+
+        // "Nothing submitted yet" is the normal state just after launch, and
+        // must read as "no rows" rather than as an error.
+        assert!(ports(None).is_empty());
+        evict(wiki_id);
+    }
+
+    #[test]
+    fn rows_take_their_label_from_the_submitted_ports_attributes() {
+        // The label comes from `portsAttributes`, which the engine carries
+        // through verbatim. If that field stopped arriving this would show a
+        // bare port number instead.
+        let wiki_id = "test-port-label";
+        evict(wiki_id);
+
+        let rows = rows_from_cache(
+            wiki_id,
+            Path::new("/tmp/test-port-label"),
+            Some(&parsed_with_port(9119, Some("Dashboard"))),
         );
-        assert_eq!(configured_ports(tmp.path()), vec![2222, 3333]);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label.as_deref(), Some("Dashboard"));
+        assert_eq!(rows[0].url, "http://localhost:9119/");
+
+        // Unknown keys are carried through without disturbing the ones we use.
+        let mut attrs = serde_json::Map::new();
+        attrs.insert(
+            "9119".to_string(),
+            serde_json::json!({ "label": "Dashboard", "onAutoForward": "openBrowser" }),
+        );
+        let with_extra = ParsedDevContainer {
+            forward_ports: vec![9119],
+            ports_attributes: Some(serde_json::Value::Object(attrs)),
+            ..Default::default()
+        };
+        let rows = rows_from_cache(wiki_id, Path::new("/tmp/test-port-label"), Some(&with_extra));
+        assert_eq!(rows[0].label.as_deref(), Some("Dashboard"));
+
+        evict(wiki_id);
     }
 
     #[test]
     fn rows_from_cache_marks_serving_only_when_cached_ok() {
-        // Build a temp wiki dir with a `.devcontainer/devcontainer.json`
-        // that forwards a single port, then verify `rows_from_cache`
-        // reflects whatever's in the cache.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let dc = tmp.path().join(".devcontainer");
-        std::fs::create_dir_all(&dc).unwrap();
-        let port = pick_unused_port();
-        let cfg = format!(
-            r#"{{
-                "name": "test",
-                "image": "scratch",
-                "forwardPorts": [{port}],
-                "portsAttributes": {{
-                    "{port}": {{ "label": "Test", "protocol": "http" }}
-                }}
-            }}"#
-        );
-        std::fs::write(dc.join("devcontainer.json"), cfg).unwrap();
-
         let wiki_id = "test-rows-from-cache";
+        let port = pick_unused_port();
+        let parsed = parsed_with_port(port, Some("Test"));
+        let path = Path::new("/tmp/test-rows-from-cache");
         evict(wiki_id);
 
         // No cache entry → not serving.
-        let rows = rows_from_cache(wiki_id, tmp.path());
+        let rows = rows_from_cache(wiki_id, path, Some(&parsed));
         assert_eq!(rows.len(), 1);
         assert!(!rows[0].serving);
         assert!(rows[0].url.starts_with("http://localhost:"));
@@ -1279,7 +1242,7 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(port, Reachable::Loopback);
         write_cached(wiki_id, m);
-        let rows = rows_from_cache(wiki_id, tmp.path());
+        let rows = rows_from_cache(wiki_id, path, Some(&parsed));
         assert!(rows[0].serving);
         assert_eq!(rows[0].url, format!("http://localhost:{port}/"));
 
@@ -1287,7 +1250,7 @@ mod tests {
         let mut m = HashMap::new();
         m.insert(port, Reachable::Direct(Ipv4Addr::new(192, 168, 64, 7)));
         write_cached(wiki_id, m);
-        let rows = rows_from_cache(wiki_id, tmp.path());
+        let rows = rows_from_cache(wiki_id, path, Some(&parsed));
         assert!(rows[0].serving);
         assert_eq!(rows[0].url, format!("http://192.168.64.7:{port}/"));
 
@@ -1303,7 +1266,7 @@ mod tests {
             },
         );
         write_cached(wiki_id, m);
-        let rows = rows_from_cache(wiki_id, tmp.path());
+        let rows = rows_from_cache(wiki_id, path, Some(&parsed));
         assert!(rows[0].serving);
         assert_eq!(rows[0].url, "http://localhost:54321/");
 
@@ -1334,30 +1297,23 @@ mod tests {
     /// gone; this asserts that eviction really does drop the serving verdict.
     #[test]
     fn evict_clears_a_serving_row_so_a_stopped_container_goes_grey() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let dc = tmp.path().join(".devcontainer");
-        std::fs::create_dir_all(&dc).unwrap();
-        std::fs::write(
-            dc.join("devcontainer.json"),
-            r#"{ "image": "alpine", "forwardPorts": [8642] }"#,
-        )
-        .unwrap();
-
         let wiki_id = "test-stale-green";
+        let parsed = parsed_with_port(8642, None);
+        let path = Path::new("/tmp/test-stale-green");
         evict(wiki_id);
 
         let mut served = HashMap::new();
         served.insert(8642u16, Reachable::Loopback);
         write_cached(wiki_id, served);
         assert!(
-            rows_from_cache(wiki_id, tmp.path())[0].serving,
+            rows_from_cache(wiki_id, path, Some(&parsed))[0].serving,
             "precondition: the cached row reads as serving"
         );
 
         // This is what `wiki_container_ports` does once it establishes that
         // no running container backs the cache any more.
         evict(wiki_id);
-        let rows = rows_from_cache(wiki_id, tmp.path());
+        let rows = rows_from_cache(wiki_id, path, Some(&parsed));
         assert_eq!(rows.len(), 1);
         assert!(
             !rows[0].serving,
