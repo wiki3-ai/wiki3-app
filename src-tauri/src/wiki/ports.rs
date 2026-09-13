@@ -204,6 +204,60 @@ fn apply_sticky(prev: Reachable, fresh: Reachable, streak: &mut u32, budget: u32
 /// decouples polling from `LocalSiteManager` registration, which is
 /// only populated by some of the start paths. The cache is *not*
 /// evicted on exit, so the dashboard keeps showing the last known
+/// Which container, if any, is bound to `local_path` via the
+/// devcontainer-controls path (start / stop / rebuild).
+///
+/// Two sources, because neither alone is sufficient:
+///
+/// * the orchestrator's in-process record for `wiki_id` — cheapest, and
+///   correct the moment the user hits Up;
+/// * a scan of the selected runtime's containers matched by bind-mount
+///   source — the orchestrator's slots are in-memory, so a container that
+///   outlived an app restart is still running and still publishing ports
+///   with nothing in-process pointing at it.
+///
+/// The scan is also what keeps this runtime-agnostic: the runtime reports
+/// the host paths it was given, whether it is Docker, Podman or Apple
+/// Containers, so no per-runtime discovery code is needed here.
+async fn devcontainer_container_for(
+    app: &tauri::AppHandle,
+    wiki_id: &str,
+    local_path: &Path,
+) -> Option<String> {
+    use tauri::Manager;
+
+    if let Some(orchestrator) = app.try_state::<devcontainer_core::LifecycleOrchestrator>() {
+        let snapshot = orchestrator.snapshot(wiki_id);
+        if snapshot.state == "running" {
+            if let Some(id) = snapshot.container_id {
+                return Some(id);
+            }
+        }
+    }
+
+    let registry = app.try_state::<devcontainer_core::RuntimeRegistry>()?;
+    let runtime = registry.resolve().await;
+    let containers = runtime.list().await.ok()?;
+    containers
+        .into_iter()
+        .find(|c| c.host_mounts.iter().any(|m| same_path(m, local_path)))
+        .map(|c| c.container_id)
+}
+
+/// Compare a host path reported by a runtime against the wiki's local
+/// path. The two can differ by a trailing slash or by a symlinked prefix
+/// (`/var` vs `/private/var` on macOS), so fall back to canonicalising.
+fn same_path(reported: &str, wanted: &Path) -> bool {
+    let reported = Path::new(reported);
+    if reported == wanted {
+        return true;
+    }
+    match (reported.canonicalize(), wanted.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// state across brief poller restarts.
 async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: tauri::AppHandle) {
     use tauri::Manager;
@@ -253,31 +307,57 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
         // map will be empty even though the container is healthy
         // on its vmnet IP.
         let container_ipv4 = {
+            let site_state = app.state::<LocalSiteManager>();
+            let site_name = site_state.get(&wiki_id).map(|s| s.serve_container);
+
+            // The devcontainer-controls path is runtime-agnostic and
+            // records its container with the orchestrator, not with
+            // `LocalSiteManager`. Asking only the Apple-specific sources
+            // therefore concludes "no container" for a Docker container —
+            // and the gate below then writes `Reachable::No` for every port
+            // *without probing at all*, leaving the dashboard permanently
+            // grey even though the ports are published and answering on
+            // loopback.
+            let known_name = match site_name.clone() {
+                Some(name) => Some(name),
+                None => devcontainer_container_for(&app, &wiki_id, &local_path).await,
+            };
+
             let needs_refresh = last_inspect_at
                 .map(|t| t.elapsed() >= INSPECT_REFRESH_INTERVAL)
-                .unwrap_or(true);
-
-            let site_state = app.state::<LocalSiteManager>();
-            let known_name = site_state.get(&wiki_id).map(|s| s.serve_container);
-            let needs_refresh =
-                needs_refresh || cached_for_container.as_deref() != known_name.as_deref();
+                .unwrap_or(true)
+                || cached_for_container.as_deref() != known_name.as_deref();
 
             if needs_refresh {
-                let bin = crate::tools::apple_container::detect()
-                    .path
-                    .unwrap_or_else(|| std::path::PathBuf::from("container"));
-                if let Some(name) = known_name {
-                    let resolved =
+                if site_name.is_some() {
+                    // Legacy Apple `Serve` flow: resolve the container's
+                    // vmnet IPv4 so the Direct fallback works when the
+                    // publish-proxy is broken.
+                    let bin = crate::tools::apple_container::detect()
+                        .path
+                        .unwrap_or_else(|| std::path::PathBuf::from("container"));
+                    let name = known_name.clone().unwrap_or_default();
+                    cached_ip =
                         crate::tools::apple_container::inspect_container_ipv4(&bin, &name)
                             .await
                             .and_then(|s| s.parse::<Ipv4Addr>().ok());
-                    cached_ip = resolved;
+                    cached_for_container = Some(name);
+                } else if let Some(name) = known_name {
+                    // A container from the devcontainer-controls path.
+                    // Docker and Podman publish their ports on the host, so
+                    // a loopback probe is sufficient and there is no vmnet
+                    // address to resolve. Apple Containers reached through
+                    // this path still work over loopback or the
+                    // publish-proxy.
+                    cached_ip = None;
                     cached_for_container = Some(name);
                 } else {
-                    // Fall back to discovering the container by
-                    // mount source. One `container ls` per refresh
-                    // interval — same load profile as inspecting a
-                    // known name.
+                    // Last resort: the legacy Apple discovery by mount
+                    // source. One `container ls` per refresh interval —
+                    // the same load profile as inspecting a known name.
+                    let bin = crate::tools::apple_container::detect()
+                        .path
+                        .unwrap_or_else(|| std::path::PathBuf::from("container"));
                     match crate::tools::apple_container::find_container_by_mount_source(
                         &bin,
                         &local_path,
@@ -1076,5 +1156,19 @@ mod tests {
         assert_eq!(rows[0].url, "http://localhost:54321/");
 
         evict(wiki_id);
+    }
+
+    #[test]
+    fn same_path_matches_equivalent_spellings() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().canonicalize().unwrap();
+        let real_str = real.to_str().unwrap();
+
+        assert!(same_path(real_str, &real));
+        // A runtime may well report the same directory with a trailing
+        // slash, and the wiki's stored path can differ by a symlinked
+        // prefix, so the comparison must not be a naive string equality.
+        assert!(same_path(&format!("{real_str}/"), &real), "trailing slash");
+        assert!(!same_path("/definitely/not/a/real/path", &real));
     }
 }
