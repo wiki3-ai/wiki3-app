@@ -20,6 +20,8 @@ export interface ParsedDevContainer {
   configFilePath?: string;
   workspaceFolder?: string;
   workspaceMount?: string;
+  /** devcontainer.json `overrideCommand`; `false` preserves the image CMD. */
+  overrideCommand?: boolean;
   mounts: string[];
   forwardPorts: number[];
   runArgs: string[];

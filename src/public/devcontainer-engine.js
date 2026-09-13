@@ -106222,6 +106222,7 @@ function toParsed(config3, configFilePath) {
     configFilePath,
     workspaceFolder: c5.workspaceFolder,
     workspaceMount: c5.workspaceMount,
+    overrideCommand: c5.overrideCommand,
     mounts,
     forwardPorts,
     runArgs,
