@@ -1346,10 +1346,78 @@ async function handleMenuAction(id: string): Promise<void> {
 
 // ── Init ─────────────────────────────────────────────────────────────────
 
+/**
+ * Global runtime picker.
+ *
+ * Deliberately *not* refreshed by the 4s dashboard poll: building the list
+ * probes every engine (one `--version` process each), and the backend
+ * registry memoises its automatic choice anyway, so polling would cost three
+ * processes every 4 seconds to learn nothing. Fetched at startup and after a
+ * selection change.
+ */
+function initRuntimePicker(): void {
+  const select = document.getElementById('w3-runtime-select') as HTMLSelectElement | null;
+  if (!select) return;
+
+  select.addEventListener('change', () => {
+    const value = select.value;
+    void (async () => {
+      try {
+        // An empty value means "Automatic" — hand the decision back.
+        if (value) await wikiApi.runtimeSelect(value);
+        else await wikiApi.runtimeUseAuto();
+      } catch (err) {
+        alert(`Could not change runtime: ${err}`);
+      } finally {
+        await refreshRuntimePicker();
+      }
+    })();
+  });
+
+  void refreshRuntimePicker();
+}
+
+async function refreshRuntimePicker(): Promise<void> {
+  const select = document.getElementById('w3-runtime-select') as HTMLSelectElement | null;
+  const status = document.getElementById('w3-runtime-status');
+  if (!select) return;
+
+  let list: wikiApi.RuntimeInfo[];
+  try {
+    list = await wikiApi.runtimeList();
+  } catch (err) {
+    if (status) status.textContent = `unavailable: ${err}`;
+    return;
+  }
+
+  const pinned = list.find((r) => r.selected);
+  const effective = list.find((r) => r.effective);
+
+  // Unavailable runtimes stay visible but disabled: "Docker is not installed"
+  // is information the user needs, and hiding it just makes the missing
+  // option look like a bug. The version (or the reason it is missing) goes in
+  // the tooltip rather than the label, which would otherwise be very long.
+  select.innerHTML = [
+    `<option value=""${pinned ? '' : ' selected'}>Automatic</option>`,
+    ...list.map((r) => {
+      const detail = r.version ?? r.reason ?? '';
+      const text = r.available ? r.label : `${r.label} — not installed`;
+      return `<option value="${escapeHtml(r.id)}"${pinned?.id === r.id ? ' selected' : ''}${
+        r.available ? '' : ' disabled'
+      } title="${escapeHtml(detail)}">${escapeHtml(text)}</option>`;
+    }),
+  ].join('');
+
+  if (status) {
+    status.textContent = effective ? `using ${effective.label}` : 'no runtime available';
+  }
+}
+
 async function init(): Promise<void> {
   console.log('[wiki3-app] Dashboard loading…');
 
   initLogsPanel();
+  initRuntimePicker();
 
   // Delegated click handling on the page.
   document.addEventListener('click', (e) => {

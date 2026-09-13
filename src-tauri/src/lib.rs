@@ -8,6 +8,7 @@ pub mod menu;
 pub mod permissions;
 pub mod providers;
 pub mod publishing_commands;
+pub mod runtime_commands;
 pub mod tauri_sink;
 pub mod tools;
 pub mod wiki;
@@ -340,6 +341,10 @@ pub fn run() {
             wiki::container_controls::wiki_container_ctl_remove,
             wiki::container_controls::wiki_container_ctl_cancel,
             wiki::ports::wiki_container_ports,
+            // Runtime selection (global — one engine serves every wiki).
+            runtime_commands::runtime_list,
+            runtime_commands::runtime_select,
+            runtime_commands::runtime_use_auto,
             // Devcontainer engine bridge — fs sandbox + parsed-config
             // submission, called by the JS engine bundle running in
             // the WebView (see `src/devcontainer-engine.ts`).

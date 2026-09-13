@@ -223,6 +223,41 @@ export function wikiContainerPorts(wikiId: string): Promise<PortRow[]> {
   return invoke<PortRow[]>('wiki_container_ports', { wikiId });
 }
 
+/**
+ * One container runtime, as reported by `runtime_list`.
+ *
+ * The choice is global (one engine serves every wiki) and lives in the
+ * backend registry, so these are plain pass-throughs with no local state.
+ */
+export interface RuntimeInfo {
+  /** Kebab-case id the backend expects back: `docker`, `podman`, `apple-containers`. */
+  id: string;
+  label: string;
+  available: boolean;
+  /** Raw `--version` output, or null when the runtime could not be probed. */
+  version: string | null;
+  /** Why it is unavailable, when it is. */
+  reason: string | null;
+  /** The user has pinned this runtime explicitly. */
+  selected: boolean;
+  /** This is the runtime operations will actually use. */
+  effective: boolean;
+}
+
+export function runtimeList(): Promise<RuntimeInfo[]> {
+  return invoke<RuntimeInfo[]>('runtime_list');
+}
+
+/** Pin a runtime explicitly, overriding the availability policy. */
+export function runtimeSelect(id: string): Promise<void> {
+  return invoke<void>('runtime_select', { id });
+}
+
+/** Drop the explicit choice and let availability decide again. */
+export function runtimeUseAuto(): Promise<void> {
+  return invoke<void>('runtime_use_auto');
+}
+
 /** Open an arbitrary URL in a new in-app window tagged to a wiki. */
 export function openNewWindowForWiki(url: string, wikiId: string): Promise<void> {
   return invoke<void>('open_new_window_for_wiki', { url, wikiId });

@@ -386,7 +386,14 @@
       <div class="w3-topbar-left">
         <h1>Wiki3</h1>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;"></div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <label for="w3-runtime-select" style="opacity:.7;font-size:12px;">Runtime</label>
+        <select
+          id="w3-runtime-select"
+          title="Which container engine Wiki3 should use for every wiki"
+        ></select>
+        <span id="w3-runtime-status" style="opacity:.7;font-size:12px;"></span>
+      </div>
     </div>
     <div class="w3-main" id="main-content">
       <div class="w3-loading"><div class="spinner"></div>Loading wikis…</div>
