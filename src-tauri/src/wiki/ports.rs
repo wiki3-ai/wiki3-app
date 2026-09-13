@@ -140,7 +140,14 @@ fn write_cached(wiki_id: &str, results: HashMap<u16, Reachable>) {
     g.by_wiki.insert(wiki_id.to_string(), results);
 }
 
-#[cfg(test)]
+/// Forget everything cached for `wiki_id`.
+///
+/// Used when we learn that the container which produced those results is
+/// gone: dropping the entries means the next poller run re-derives
+/// reachability from scratch, instead of the sticky-OK rule holding up a
+/// stale success. The `last_request` entry goes too, so the poller's idle
+/// check starts fresh in the same breath; callers must `touch_request`
+/// afterwards if they are about to spawn one.
 fn evict(wiki_id: &str) {
     let mut g = cache().lock().unwrap();
     g.by_wiki.remove(wiki_id);
@@ -240,8 +247,34 @@ async fn devcontainer_container_for(
     let containers = runtime.list().await.ok()?;
     containers
         .into_iter()
-        .find(|c| c.host_mounts.iter().any(|m| same_path(m, local_path)))
+        // Only a *running* container has ports published — a stopped one has
+        // already had its bindings released, so counting it as present would
+        // keep a stale "serving" verdict alive.
+        .find(|c| {
+            c.state == devcontainer_core::ContainerState::Running
+                && c.host_mounts.iter().any(|m| same_path(m, local_path))
+        })
         .map(|c| c.container_id)
+}
+
+/// Whether a container is still running for this wiki, judged by the most
+/// direct evidence available.
+///
+/// Conservative by design: `LocalSiteManager` is authoritative for the
+/// legacy Apple `Serve` flow (whose container the poller reaches by vmnet
+/// IP), so when it has an entry we report running and leave that path
+/// exactly as it was.
+async fn container_running_for(app: &tauri::AppHandle, wiki_id: &str, local_path: &Path) -> bool {
+    use tauri::Manager;
+
+    if let Some(site) = app.try_state::<LocalSiteManager>() {
+        if site.get(wiki_id).is_some() {
+            return true;
+        }
+    }
+    devcontainer_container_for(app, wiki_id, local_path)
+        .await
+        .is_some()
 }
 
 /// Compare a host path reported by a runtime against the wiki's local
@@ -337,10 +370,9 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
                         .path
                         .unwrap_or_else(|| std::path::PathBuf::from("container"));
                     let name = known_name.clone().unwrap_or_default();
-                    cached_ip =
-                        crate::tools::apple_container::inspect_container_ipv4(&bin, &name)
-                            .await
-                            .and_then(|s| s.parse::<Ipv4Addr>().ok());
+                    cached_ip = crate::tools::apple_container::inspect_container_ipv4(&bin, &name)
+                        .await
+                        .and_then(|s| s.parse::<Ipv4Addr>().ok());
                     cached_for_container = Some(name);
                 } else if let Some(name) = known_name {
                     // A container from the devcontainer-controls path.
@@ -404,8 +436,7 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
             for port in &ports {
                 let prev = read_cached(&wiki_id, *port);
                 let streak = fail_streak.entry(*port).or_insert(0);
-                let resolved =
-                    apply_sticky(prev, Reachable::No, streak, STICKY_OK_FAILURE_BUDGET);
+                let resolved = apply_sticky(prev, Reachable::No, streak, STICKY_OK_FAILURE_BUDGET);
                 empty.insert(*port, resolved);
             }
             for (port, reach) in &empty {
@@ -499,9 +530,12 @@ async fn poll_wiki_ports(wiki_id: String, local_path: std::path::PathBuf, app: t
         // act on. Set `WIKI3_KEEP_PROBING=1` to keep polling at
         // 1Hz indefinitely (useful for diagnosing flaky links).
         let all_ok = !effective.is_empty()
-            && effective
-                .values()
-                .all(|r| matches!(r, Reachable::Loopback | Reachable::Direct(_) | Reachable::Forwarder { .. }));
+            && effective.values().all(|r| {
+                matches!(
+                    r,
+                    Reachable::Loopback | Reachable::Direct(_) | Reachable::Forwarder { .. }
+                )
+            });
         write_cached(&wiki_id, effective);
         if all_ok && !keep_probing_after_settled() {
             eprintln!(
@@ -738,6 +772,27 @@ pub async fn wiki_container_ports(
     let path = std::path::PathBuf::from(local);
     if !path.exists() {
         return Ok(Vec::new());
+    }
+
+    // Stale-green guard.
+    //
+    // Once every port settles, the poller retires itself and — by design —
+    // deliberately keeps its claim, so later refreshes keep showing the last
+    // result without re-spawning it (that was to stop `HEAD /` lines filling
+    // the in-container access log). Nothing then notices when the container
+    // goes away: Stop, a crash, or a `docker stop` run outside the app. A
+    // once-green port therefore stayed green forever.
+    //
+    // So: whenever the cache claims something is serving, confirm a running
+    // container still backs it. If not, drop the cache and release the claim
+    // so the poller re-runs, finds no container and writes `No`. Skipped
+    // entirely when nothing is green, so the steady state costs nothing.
+    if rows_from_cache(&wiki_id, &path).iter().any(|r| r.serving)
+        && !container_running_for(&app, &wiki_id, &path).await
+    {
+        evict(&wiki_id);
+        release_poller(&wiki_id);
+        crate::wiki::forwarder::stop_all_for_wiki(&wiki_id);
     }
 
     // Record that the dashboard is interested in this wiki's ports
@@ -1170,5 +1225,48 @@ mod tests {
         // prefix, so the comparison must not be a naive string equality.
         assert!(same_path(&format!("{real_str}/"), &real), "trailing slash");
         assert!(!same_path("/definitely/not/a/real/path", &real));
+    }
+
+    /// Mirror of `cache_flips_to_loopback_when_server_starts`: once a port
+    /// has gone green it must be able to go back to grey.
+    ///
+    /// The regression this guards is the poller retiring itself *and holding
+    /// its claim* once every port settled, so nothing ever re-probed and a
+    /// stopped container left the row green forever. `wiki_container_ports`
+    /// breaks that by evicting the cache when it finds the backing container
+    /// gone; this asserts that eviction really does drop the serving verdict.
+    #[test]
+    fn evict_clears_a_serving_row_so_a_stopped_container_goes_grey() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dc = tmp.path().join(".devcontainer");
+        std::fs::create_dir_all(&dc).unwrap();
+        std::fs::write(
+            dc.join("devcontainer.json"),
+            r#"{ "image": "alpine", "forwardPorts": [8642] }"#,
+        )
+        .unwrap();
+
+        let wiki_id = "test-stale-green";
+        evict(wiki_id);
+
+        let mut served = HashMap::new();
+        served.insert(8642u16, Reachable::Loopback);
+        write_cached(wiki_id, served);
+        assert!(
+            rows_from_cache(wiki_id, tmp.path())[0].serving,
+            "precondition: the cached row reads as serving"
+        );
+
+        // This is what `wiki_container_ports` does once it establishes that
+        // no running container backs the cache any more.
+        evict(wiki_id);
+        let rows = rows_from_cache(wiki_id, tmp.path());
+        assert_eq!(rows.len(), 1);
+        assert!(
+            !rows[0].serving,
+            "after eviction a port must not still read as serving"
+        );
+
+        evict(wiki_id);
     }
 }
