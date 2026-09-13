@@ -112,7 +112,22 @@
       .w3-panel h3 { margin: 0 0 12px; font-size: 17px; font-weight: 600; }
       .w3-muted { color: #666; }
       .w3-error { color: #cc3300; }
-      .w3-actions { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+      .w3-actions { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+      /* The runtime picker is mounted into the action row (see `render()`).
+         Styled to sit alongside the buttons rather than shout over them. */
+      .w3-runtime-picker { display: inline-flex; align-items: center; gap: 6px; }
+      .w3-runtime-picker > label { font-size: 13px; color: #666; font-weight: 500; }
+      .w3-runtime-picker > select {
+        padding: 8px 10px;
+        border: 1px solid #d0d0d0;
+        border-radius: 6px;
+        background: #fff;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        max-width: 240px;
+      }
+      .w3-runtime-status { font-size: 12px; color: #666; }
       .w3-btn {
         padding: 8px 16px;
         border: 1px solid #d0d0d0;
@@ -385,14 +400,6 @@
     <div class="w3-topbar">
       <div class="w3-topbar-left">
         <h1>Wiki3</h1>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <label for="w3-runtime-select" style="opacity:.7;font-size:12px;">Runtime</label>
-        <select
-          id="w3-runtime-select"
-          title="Which container engine Wiki3 should use for every wiki"
-        ></select>
-        <span id="w3-runtime-status" style="opacity:.7;font-size:12px;"></span>
       </div>
     </div>
     <div class="w3-main" id="main-content">

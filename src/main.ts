@@ -182,8 +182,10 @@ function render(): void {
           <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
           <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
           <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
+          <span id="w3-runtime-slot"></span>
         </div>
       </div>`;
+    mountRuntimePicker();
     return;
   }
 
@@ -194,10 +196,12 @@ function render(): void {
       <button class="w3-btn" data-action="open-local">Open Local Repo…</button>
       <button class="w3-btn" data-action="toggle-logs" id="toggle-logs-btn" title="Show/hide the container logs panel">Logs</button>
       <button class="w3-btn" data-action="diagnose" title="Generate a diagnostic report file">Diagnose…</button>
+      <span id="w3-runtime-slot"></span>
     </div>
     <div class="w3-workspace-list" id="w3-wiki-list">${cards}</div>
   `;
   wireDragAndDrop();
+  mountRuntimePicker();
 }
 
 // ── Drag-and-drop reorder ────────────────────────────────────────────────
@@ -1349,14 +1353,58 @@ async function handleMenuAction(id: string): Promise<void> {
 /**
  * Global runtime picker.
  *
+ * The control lives in the dashboard's action row, which `render()` rebuilds
+ * wholesale every 4 seconds. Recreating it each pass would drop the change
+ * listener and — worse — snap the dropdown shut while the user is picking from
+ * it. So the element is built once and *moved* into the freshly rendered slot;
+ * `appendChild` relocates an existing node without disturbing the node, its
+ * listener, or its open state.
+ *
  * Deliberately *not* refreshed by the 4s dashboard poll: building the list
  * probes every engine (one `--version` process each), and the backend
  * registry memoises its automatic choice anyway, so polling would cost three
  * processes every 4 seconds to learn nothing. Fetched at startup and after a
  * selection change.
  */
+let runtimePickerEl: HTMLSpanElement | null = null;
+let runtimeSelectEl: HTMLSelectElement | null = null;
+let runtimeStatusEl: HTMLSpanElement | null = null;
+
+function buildRuntimePicker(): HTMLSpanElement {
+  const wrap = document.createElement('span');
+  wrap.className = 'w3-runtime-picker';
+
+  const label = document.createElement('label');
+  label.textContent = 'Runtime';
+  label.htmlFor = 'w3-runtime-select';
+
+  const select = document.createElement('select');
+  select.id = 'w3-runtime-select';
+  select.title = 'Which container engine Wiki3 should use for every wiki';
+
+  const status = document.createElement('span');
+  status.className = 'w3-runtime-status';
+
+  wrap.append(label, select, status);
+  runtimeSelectEl = select;
+  runtimeStatusEl = status;
+  return wrap;
+}
+
+/**
+ * Re-attach the picker to the slot the most recent `render()` produced. The
+ * old slot is destroyed with the rest of `main`'s children, so this is what
+ * keeps the control on screen across refreshes.
+ */
+function mountRuntimePicker(): void {
+  if (!runtimePickerEl) return;
+  const slot = document.getElementById('w3-runtime-slot');
+  if (slot && runtimePickerEl.parentElement !== slot) slot.appendChild(runtimePickerEl);
+}
+
 function initRuntimePicker(): void {
-  const select = document.getElementById('w3-runtime-select') as HTMLSelectElement | null;
+  if (!runtimePickerEl) runtimePickerEl = buildRuntimePicker();
+  const select = runtimeSelectEl;
   if (!select) return;
 
   select.addEventListener('change', () => {
@@ -1374,12 +1422,13 @@ function initRuntimePicker(): void {
     })();
   });
 
+  mountRuntimePicker();
   void refreshRuntimePicker();
 }
 
 async function refreshRuntimePicker(): Promise<void> {
-  const select = document.getElementById('w3-runtime-select') as HTMLSelectElement | null;
-  const status = document.getElementById('w3-runtime-status');
+  const select = runtimeSelectEl;
+  const status = runtimeStatusEl;
   if (!select) return;
 
   let list: wikiApi.RuntimeInfo[];
