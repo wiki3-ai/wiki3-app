@@ -27,7 +27,9 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tauri::{command, State};
 
-use crate::tools::devcontainer_config::{find_devcontainer_configs, load_config};
+use crate::tools::devcontainer_config::{
+    find_devcontainer_configs, load_config, DevcontainerConfig,
+};
 use crate::wiki::commands::WikiState;
 use crate::wiki::local_site::LocalSiteManager;
 
@@ -568,6 +570,62 @@ fn keep_probing_after_settled() -> bool {
     )
 }
 
+// ── Parsed-config cache ──────────────────────────────────────────────────
+
+/// A parsed `devcontainer.json` plus the file identity it was parsed from.
+struct CachedConfig {
+    modified: Option<std::time::SystemTime>,
+    len: u64,
+    config: Arc<DevcontainerConfig>,
+}
+
+/// Memoised parses, keyed by absolute config path.
+static CONFIG_CACHE: OnceLock<Mutex<HashMap<std::path::PathBuf, CachedConfig>>> = OnceLock::new();
+
+/// Parse `path`, reusing a previous result when the file has not changed.
+///
+/// `load_config` builds a *fresh* QuickJS runtime and context, evaluates the
+/// embedded resolver, then deserialises — and `wiki_container_ports` needs the
+/// answer for every wiki on every 4s dashboard tick. Un-memoised, the app was
+/// standing up a JS engine four times a minute per wiki to re-read a file that
+/// almost never changes.
+///
+/// Returns `None` on any IO or parse error, matching what the callers did when
+/// they parsed inline.
+fn load_config_cached(path: &Path) -> Option<Arc<DevcontainerConfig>> {
+    let (modified, len) = std::fs::metadata(path)
+        .map(|m| (m.modified().ok(), m.len()))
+        .unwrap_or((None, 0));
+
+    let cache = CONFIG_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    // A poisoned lock is recovered from rather than propagated: a cache is not
+    // worth taking the port panel down for.
+    let mut guard = match cache.lock() {
+        Ok(g) => g,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+
+    if let Some(hit) = guard.get(path) {
+        // Size is part of the key because mtime granularity is not guaranteed:
+        // a rewrite that changes the length is still detected if the timestamp
+        // has not moved.
+        if hit.modified == modified && hit.len == len {
+            return Some(Arc::clone(&hit.config));
+        }
+    }
+
+    let config = Arc::new(load_config(path).ok()?);
+    guard.insert(
+        path.to_path_buf(),
+        CachedConfig {
+            modified,
+            len,
+            config: Arc::clone(&config),
+        },
+    );
+    Some(config)
+}
+
 /// Read `devcontainer.json` and return the parsed list of forwarded
 /// ports. Returns an empty vec on any parse / IO error.
 fn configured_ports(local_path: &Path) -> Vec<u16> {
@@ -575,7 +633,7 @@ fn configured_ports(local_path: &Path) -> Vec<u16> {
     let Some(cfg_path) = configs.first() else {
         return Vec::new();
     };
-    let Ok(cfg) = load_config(cfg_path) else {
+    let Some(cfg) = load_config_cached(cfg_path) else {
         return Vec::new();
     };
     cfg.forward_ports.iter().filter_map(parse_port).collect()
@@ -593,7 +651,7 @@ fn rows_from_cache(wiki_id: &str, local_path: &Path) -> Vec<PortRow> {
     let Some(cfg_path) = configs.first() else {
         return Vec::new();
     };
-    let Ok(cfg) = load_config(cfg_path) else {
+    let Some(cfg) = load_config_cached(cfg_path) else {
         return Vec::new();
     };
 
@@ -1146,6 +1204,45 @@ mod tests {
         stop.store(true, Ordering::SeqCst);
         let _ = handle.join();
         evict(wiki_id);
+    }
+
+    #[test]
+    fn config_cache_returns_a_fresh_parse_when_the_file_changes() {
+        // The cache exists to avoid re-parsing an unchanged file, so the one
+        // thing it must never do is serve a stale config after an edit — the
+        // user would edit `forwardPorts` and watch the port panel ignore it.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // `find_devcontainer_configs` looks under `.devcontainer/`, so the
+        // file has to live there for `configured_ports` to see it.
+        let dc = tmp.path().join(".devcontainer");
+        std::fs::create_dir_all(&dc).unwrap();
+        let cfg_path = dc.join("devcontainer.json");
+
+        std::fs::write(
+            &cfg_path,
+            r#"{ "image": "scratch", "forwardPorts": [1111] }"#,
+        )
+        .unwrap();
+        let first = load_config_cached(&cfg_path).expect("first parse");
+        assert_eq!(configured_ports(tmp.path()), vec![1111]);
+
+        // Same file, unchanged: the memoised parse is reused.
+        let again = load_config_cached(&cfg_path).expect("cached parse");
+        assert!(Arc::ptr_eq(&first, &again), "unchanged file was re-parsed");
+
+        // Rewritten with a longer body, so the size component of the key
+        // differs even if the mtime granularity is coarse.
+        std::fs::write(
+            &cfg_path,
+            r#"{ "image": "scratch", "forwardPorts": [2222, 3333] }"#,
+        )
+        .unwrap();
+        let updated = load_config_cached(&cfg_path).expect("re-parse");
+        assert!(
+            !Arc::ptr_eq(&first, &updated),
+            "changed file was not re-parsed"
+        );
+        assert_eq!(configured_ports(tmp.path()), vec![2222, 3333]);
     }
 
     #[test]
