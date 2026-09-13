@@ -24,8 +24,6 @@ let wikis: Wiki[] = [];
 let trackedWindows: TrackedWindowInfo[] = [];
 // Wiki ids whose window-list section is currently expanded.
 const expanded = new Set<string>();
-// Per-wiki preview-container status. Null/missing = not running.
-const containerStatuses = new Map<string, wikiApi.RunningSite | null>();
 const containerCtlStatuses = new Map<string, wikiApi.ContainerControlStatus | null>();
 // Per-wiki forwarded-port snapshot.
 const containerPorts = new Map<string, wikiApi.PortRow[]>();
@@ -498,12 +496,6 @@ async function refresh(): Promise<void> {
       .filter((w) => !!w.local_path)
       .map(async (w) => {
         try {
-          const s = await wikiApi.wikiContainerStatus(w.id);
-          containerStatuses.set(w.id, s);
-        } catch {
-          /* keep previous status */
-        }
-        try {
           const c = await wikiApi.wikiContainerCtlStatus(w.id);
           containerCtlStatuses.set(w.id, c);
         } catch {
@@ -776,59 +768,6 @@ async function openCommitDialog(wikiId: string): Promise<void> {
       status.textContent = String(err);
     }
   });
-}
-
-async function buildSite(wikiId: string): Promise<void> {
-  const w = wikis.find((x) => x.id === wikiId);
-  if (!w) return;
-  const dlg = showDialog(`
-    <h3>Building — ${escapeHtml(w.name)}</h3>
-    <div class="w3-muted" style="font-size:13px;">Running <code>jupyter lite build</code> in <code>${escapeHtml(w.local_path ?? '')}</code>…</div>
-    <div class="w3-dialog-status" id="build-status" style="display:block;margin-top:12px;">Working…</div>
-    <div class="w3-dialog-actions">
-      <button type="button" class="w3-btn" data-act="close" disabled>Close</button>
-    </div>`);
-  const status = dlg.querySelector('#build-status') as HTMLElement;
-  const closeBtn = dlg.querySelector('[data-act="close"]') as HTMLButtonElement;
-  try {
-    const result = await wikiApi.wikiBuildSite(wikiId);
-    status.textContent = `Built successfully → ${result.output_dir}`;
-  } catch (err) {
-    status.classList.add('w3-error');
-    status.textContent = String(err);
-  }
-  closeBtn.disabled = false;
-  closeBtn.addEventListener('click', () => dlg.remove());
-}
-
-async function startContainer(wikiId: string): Promise<void> {
-  const w = wikis.find((x) => x.id === wikiId);
-  if (!w) return;
-  const dlg = showDialog(`
-    <h3>Starting Preview Container — ${escapeHtml(w.name)}</h3>
-    <div class="w3-muted" style="font-size:13px;">
-      Starting <code>jupyter lite serve</code> in Apple Container.
-      The first run can take a while while the image is built and
-      <code>jupyter lite build</code> completes. The Site button will
-      appear on the card once the server is accepting connections.
-    </div>
-    <div class="w3-dialog-status" id="serve-status" style="display:block;margin-top:12px;">Working…</div>
-    <div class="w3-dialog-actions">
-      <button type="button" class="w3-btn" data-act="close" disabled>Close</button>
-    </div>`);
-  const status = dlg.querySelector('#serve-status') as HTMLElement;
-  const closeBtn = dlg.querySelector('[data-act="close"]') as HTMLButtonElement;
-  try {
-    const site = await wikiApi.wikiStartContainer(wikiId);
-    containerStatuses.set(wikiId, site);
-    status.textContent = `Serving on ${site.url}`;
-    await refresh();
-  } catch (err) {
-    status.classList.add('w3-error');
-    status.textContent = String(err);
-  }
-  closeBtn.disabled = false;
-  closeBtn.addEventListener('click', () => dlg.remove());
 }
 
 async function openUrlDialog(): Promise<void> {
@@ -1197,28 +1136,6 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           alert(`Pull failed: ${err}`);
         }
         break;
-      case 'build-site':
-        await buildSite(id);
-        break;
-      case 'start-container':
-        await startContainer(id);
-        break;
-      case 'stop-container':
-        try {
-          await wikiApi.wikiStopContainer(id);
-          containerStatuses.set(id, null);
-          await refresh();
-        } catch (err) {
-          alert(`Stop failed: ${err}`);
-        }
-        break;
-      case 'open-local-site-external': {
-        const status = containerStatuses.get(id);
-        if (status?.url) {
-          await wikiApi.openExternalUrl(status.url);
-        }
-        break;
-      }
       case 'container-up':
         try {
           containerCtlInFlight.add(id);

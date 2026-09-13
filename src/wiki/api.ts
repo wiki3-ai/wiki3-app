@@ -133,46 +133,9 @@ export function wikiCommitAndMaybePublish(
   });
 }
 
-/** Run `jupyter lite build` in the wiki's local directory. */
-export function wikiBuildSite(
-  wikiId: string,
-): Promise<{ success: boolean; output_dir: string; stdout: string; stderr: string }> {
-  return invoke<{ success: boolean; output_dir: string; stdout: string; stderr: string }>(
-    'wiki_build_site',
-    { wikiId },
-  );
-}
-
-/**
- * Start (or re-attach to) the per-wiki preview container. Idempotent:
- * returns the existing running site if already started. Returns the
- * loopback URL once the serve port is accepting connections.
- */
-export function wikiStartContainer(wikiId: string): Promise<RunningSite> {
-  return invoke<RunningSite>('wiki_start_container', { wikiId });
-}
-
-/** Stop the preview container for a wiki (best-effort). */
-export function wikiStopContainer(wikiId: string): Promise<void> {
-  return invoke<void>('wiki_stop_container', { wikiId });
-}
-
-export interface RunningSite {
-  wiki_id: string;
-  serve_container: string;
-  watch_container: string | null;
-  host_port: number;
-  url: string;
-}
-
-export function wikiContainerStatus(wikiId: string): Promise<RunningSite | null> {
-  return invoke<RunningSite | null>('wiki_container_status', { wikiId });
-}
-
 // ── Generic container controls (devcontainer-core) ───────────────────
 //
-// Thin wrappers around the new `wiki_container_ctl_*` Tauri commands.
-// These are independent of the wiki-specific `Serve` flow above and
+// Thin wrappers around the `wiki_container_ctl_*` Tauri commands.
 // drive the start/stop/restart/rebuild/remove buttons on each card.
 
 export interface ContainerControlStatus {
