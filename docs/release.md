@@ -1,17 +1,16 @@
 # Build, sign, notarize, release
 
-Written because this is infrequent enough to forget. There are **two paths**, but
-only one of them works today:
+Written because this is infrequent enough to forget. The macOS release is cut
+**locally**, by the scripts below — that is the only path that works today.
+`.github/workflows/build-macos.yml` is parked and cannot run; see the CI section
+further down.
 
-- **Local scripts** — this is how releases are actually cut.
-- **CI** (`build-macos.yml`) — set up, and correct as far as the workflow goes, but
-  **it cannot succeed: the repository has no Actions secrets configured.** Its only
-  run was the `v0.4.0` tag on 2026-04-27, which failed in 22 seconds at the
-  certificate-import step. Treat CI as future work until the secrets below exist.
-
-macOS only. Releases are **universal** (`universal-apple-darwin`), so one download
+macOS releases are **universal** (`universal-apple-darwin`), so one download
 covers Apple Silicon and Intel; `minimumSystemVersion` is 15.0 (Sequoia), which is
-what still lets Intel Macs in. There is no Windows build.
+what still lets Intel Macs in.
+
+The **Windows** installer is built by CI, because it cannot be built on a Mac. See
+"Windows installer" below.
 
 ## TL;DR
 
@@ -316,13 +315,18 @@ check the assets before anyone can see them.
 Guards: version agreement across the five files, and the DMG must match this
 version exactly (it prints any stale DMGs it found instead).
 
-## CI path — currently non-functional
+## CI path — parked
 
-`.github/workflows/build-macos.yml`, on `push: tags: ["v*"]` or manual dispatch.
+`.github/workflows/build-macos.yml` now runs on `workflow_dispatch` only. It used
+to trigger on `v*` tags, which meant publishing any release produced a failing
+check from a job that never had a chance of passing. It is parked rather than
+deleted because it is the natural starting point if the release is ever automated.
 
 **It has never succeeded, because the repo has no secrets.** `gh secret list -R
 wiki3-ai/wiki3-app` returns *"no secrets found"*, so the certificate-import step
-fails immediately. The only run, on the `v0.4.0` tag, failed in 22 seconds.
+fails immediately. The only run, on the `v0.4.0` tag, failed in 22 seconds. That
+import step has therefore never executed once, so even with the secrets present
+the workflow should be treated as unverified rather than ready.
 
 To make it work, add these as repository secrets:
 
@@ -334,6 +338,12 @@ To make it work, add these as repository secrets:
 | `APPLE_API_KEY` | App Store Connect key **id** (also used as the `.p8` filename stem) |
 | `APPLE_API_KEY_CONTENT` | the `.p8` contents |
 | `APPLE_API_ISSUER` | the App Store Connect issuer UUID |
+
+**Credential trap.** This workflow notarizes with an App Store Connect **API key**
+(the `.p8`). `scripts/notarize.sh` notarizes with an app-specific **password**
+stored in the keychain as the `wiki3-notary` profile. Those are different
+credential types, so the local credential that demonstrably works cannot simply be
+copied into CI — it is not just a matter of encoding it into a secret.
 
 Once they exist, the job does:
 
@@ -351,8 +361,41 @@ Once they exist, the job does:
   GitHub release when the ref is a tag.
 - Deletes the keychain in an `always()` step.
 
-Because it has never run green, **do not assume a tag push publishes anything** —
-verify the run before telling anyone a release is out.
+Because it has never run green, **do not assume a tag push publishes a macOS
+build** — verify the run before telling anyone a release is out.
+
+## Windows installer
+
+`.github/workflows/build-windows.yml` is the one build that has to be CI. You
+cannot build a Windows installer on a Mac, and `cargo check --target
+x86_64-pc-windows-msvc` stops at the build script because it needs a Windows
+resource compiler — so a local check proves nothing about bundling.
+
+It needs **no secrets**: there is no signing or notarization step. The installer
+is unsigned, so Windows shows a SmartScreen warning on first run, which is
+accepted for now.
+
+On a `v*` tag push it builds the NSIS installer and attaches
+`Wiki3_<version>_x64-setup.exe` to the release. On `docker`/`main` pushes and pull
+requests it builds the same thing but uploads it as the `Wiki3-Windows-x64`
+artifact instead of touching a release.
+
+To build one by hand and fetch it:
+
+```bash
+gh workflow run build-windows.yml -R wiki3-ai/wiki3-app
+gh run watch -R wiki3-ai/wiki3-app
+gh run download -R wiki3-ai/wiki3-app -n Wiki3-Windows-x64 -D /tmp/wiki3-win
+```
+
+That is how the Windows asset was added to the v0.6.0 draft, which predates the
+tag-triggered path. `src-tauri/tauri.windows.conf.json` retargets the bundle from
+the macOS `app`/`dmg` pair to `nsis`.
+
+Both Rust jobs in CI run `cargo clippy --all-targets -- -D warnings`. Worth
+knowing when touching macOS-only code: an import used only inside
+`#[cfg(target_os = "macos")]` is a hard error on the Windows job, even though it
+compiles fine here.
 
 ## Footguns
 
@@ -367,9 +410,12 @@ verify the run before telling anyone a release is out.
   `Wiki3_<version>_universal.dmg` by default. An arm64 iteration build leaves an
   `..._aarch64.dmg` that it will deliberately *not* pick up — set
   `ARCH_SUFFIX=aarch64` if that is genuinely what you mean to ship.
-- **A tag push does not currently publish anything** — the workflow has no secrets
-  and has never succeeded. Publish locally with `npm run release`, or fix the
-  secrets first.
+- **A tag push publishes the Windows installer, but not the Mac build.** A `v*` tag
+  runs `build-windows.yml`, which attaches `Wiki3_<version>_x64-setup.exe` to the
+  release for that tag. The macOS DMG is still published locally with
+  `npm run release`; the parked workflow contributes nothing. Note that
+  `gh release create --draft` does **not** create the tag — publishing the draft
+  does — so the Windows build only runs once you publish.
 - **Notarization needs a network round trip to Apple** and will fail on a
   corp/VPN host that filters it; both scripts use `--wait` so the failure is at
   least explicit.
