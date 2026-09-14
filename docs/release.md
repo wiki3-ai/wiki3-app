@@ -210,6 +210,20 @@ that prints `0 valid identities found`, `build.sh` will refuse to run — correc
 because Tauri would otherwise bundle an unsigned app that notarization later
 rejects.
 
+**A Team ID does not mean a team account.** Every Apple Developer account carries
+one, individual accounts included — for an individual, the certificate's `O` field is
+simply your own name. So a personal account still gets `(XXXXXXXXXX)` in the identity
+string. To see what the certificate actually says, and when it lapses:
+
+```bash
+security find-certificate -c "Developer ID Application" -p \
+  | openssl x509 -noout -subject -dates
+```
+
+`subject=` is what `find-identity` shows; `notAfter=` is the expiry. Developer ID
+certificates are short-lived (about a year), and an expired one stops signing the day
+it lapses — worth a calendar note rather than discovering it during a release.
+
 If your identity string differs from the default in `build.sh`, override it rather
 than editing the script:
 
