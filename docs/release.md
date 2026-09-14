@@ -380,6 +380,13 @@ On a `v*` tag push it builds the NSIS installer and attaches
 requests it builds the same thing but uploads it as the `Wiki3-Windows-x64`
 artifact instead of touching a release.
 
+**Its trigger reads the workflow from the tagged commit, so where the tag points
+matters.** A tag on a commit that predates `build-windows.yml` runs nothing at all —
+no workflow file exists there to run — and adding a workflow later cannot rescue an
+already-placed tag. v0.6.0 is in exactly that position: its tag landed on `main` at
+`8809bea` (see the footgun below), which is why that release's `.exe` had to be
+built and attached by hand.
+
 To build one by hand and fetch it:
 
 ```bash
@@ -399,6 +406,17 @@ compiles fine here.
 
 ## Footguns
 
+- **A tag names a commit, and `gh release create` picks one you did not choose.**
+  Without `--target` it targets the repository's **default branch**, not the commit you
+  just built. That is how v0.6.0 shipped tagged on `8809bea` — which is `v0.5.6`, from
+  2026-05-15, 38 commits behind — so the release's "Source code" download was not the
+  released code. `release.sh` now resolves `HEAD` once and passes it explicitly, and
+  refuses to run if a tracked file is modified, because in that case no commit at all
+  describes what was built. Untracked files are ignored on purpose: this repo carries
+  stray screenshots and log files.
+- **GitHub reads workflow files from the tagged commit, not from the branch tip.** So a
+  tag placed on an old commit runs the workflows as they were then — possibly none.
+  This is why a correct tag is not just cosmetic.
 - **The engine bundle is a checked-in build artifact.** If you changed anything
   in `devcontainers-cli`, rebuild it *and hand-copy* `devcontainer-engine.js`
   **and** `.map` into `src/public/` before building the app. Nothing automates

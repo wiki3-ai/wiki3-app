@@ -41,6 +41,24 @@ if [ "$VERSION" != "$CARGO_VERSION" ] || [ "$VERSION" != "$TAURI_VERSION" ]; the
   exit 1
 fi
 
+# The tag must name the commit the artifacts were built from. Left to
+# itself `gh release create` targets the repository's *default branch*,
+# which is how v0.6.0 came to be tagged on a commit 38 behind the code it
+# shipped. Resolve the commit once, here, and pass it explicitly.
+RELEASE_COMMIT=$(git rev-parse HEAD)
+
+# The artifacts were produced by build.sh from the working tree. If a
+# tracked file is modified, no commit describes what was actually built
+# and the tag would point at code that does not match the DMG. Untracked
+# files are ignored deliberately: this repo carries stray screenshots and
+# log files that have nothing to do with a release.
+if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+  echo "Tracked files have uncommitted changes:"
+  git status --short --untracked-files=no | sed 's/^/  /'
+  echo "Commit or stash them so the tag matches what was built."
+  exit 1
+fi
+
 # Find DMG matching this version. The bundle filename embeds the
 # version Tauri saw at build time (`Wiki3_<ver>_<arch>.dmg`), so
 # requiring an exact match catches the "I bumped versions but didn't
@@ -98,6 +116,7 @@ ZIP_NAME=$(basename "$ZIP")
 ZIP_SIZE=$(du -h "$ZIP" | cut -f1 | xargs)
 
 echo "Release: $TAG"
+echo "Commit:  $RELEASE_COMMIT"
 echo "Assets:  $DMG_NAME ($DMG_SIZE, $SIGNED)"
 echo "         $ZIP_NAME ($ZIP_SIZE, $SIGNED)"
 echo ""
@@ -105,6 +124,16 @@ echo ""
 # Check if release already exists
 if gh release view "$TAG" &>/dev/null; then
   echo "Release $TAG already exists. Uploading assets..."
+
+  # A tag can point somewhere other than the code just built — that is
+  # exactly how v0.6.0 shipped with its tag on the default branch. Say so
+  # loud enough to notice before the assets land under the wrong source.
+  EXISTING_COMMIT=$(git rev-list -n1 "$TAG" 2>/dev/null || true)
+  if [ -n "$EXISTING_COMMIT" ] && [ "$EXISTING_COMMIT" != "$RELEASE_COMMIT" ]; then
+    echo "WARNING: tag $TAG points at ${EXISTING_COMMIT:0:7}, not the current HEAD ${RELEASE_COMMIT:0:7}."
+    echo "         The release's source code will not match these assets."
+  fi
+
   gh release upload "$TAG" "$DMG" "$ZIP" --clobber
 else
   TITLE="Wiki3 ${TAG}"
@@ -114,6 +143,7 @@ else
   gh release create "$TAG" \
     --title "$TITLE" \
     --notes "$NOTES" \
+    --target "$RELEASE_COMMIT" \
     $DRAFT \
     "$DMG" "$ZIP"
 fi
