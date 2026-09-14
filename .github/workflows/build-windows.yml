@@ -1,18 +1,20 @@
 name: Build Windows App
 
-# No secrets required: this job exists to answer "does the app build for
-# Windows at all?", which cannot be determined from a Mac. A cross-compiled
-# `cargo check` on macOS stops at the build script, which needs a Windows
-# resource compiler; the only honest way to find the macOS-specific code is to
-# compile on Windows.
+# Produces the NSIS installer, which is the Windows counterpart of the DMG.
 #
-# It starts as a `cargo check` because that enumerates every error in one run
-# and costs a couple of minutes, rather than the full bundling path. Once it is
-# green the build step should become `npx tauri build`, producing the NSIS
-# installer configured in `tauri.windows.conf.json`.
+# No signing secrets are needed: unlike macOS there is no notarization step, so
+# an unsigned installer is a usable artifact. Windows shows a SmartScreen
+# warning on first run, which is the cost of not holding an Authenticode
+# certificate.
+#
+# This job cannot be replaced by a cross-compiled check on a Mac. `cargo check
+# --target x86_64-pc-windows-msvc` stops at the build script, which needs a
+# Windows resource compiler, so compiling here is the only honest way to find
+# code that only works on macOS.
 on:
   push:
     branches: [docker, main]
+    tags: ["v*"]
   pull_request:
     branches: [docker, main]
   workflow_dispatch:
@@ -22,9 +24,9 @@ env:
 
 jobs:
   build:
-    name: cargo check (Windows)
+    name: Build Windows (NSIS)
     runs-on: windows-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     defaults:
       run:
         # The default on Windows runners is PowerShell, where a trailing `\` is
@@ -34,7 +36,7 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `devcontainer-core` is a relative path dependency pointing at a sibling
       # checkout (`../../devcontainers-cli/...`), so CI has to reproduce that
@@ -47,13 +49,15 @@ jobs:
             "${{ github.workspace }}/../devcontainers-cli"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -63,17 +67,43 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # tauri-build validates that frontendDist exists, so the web assets have
-      # to be built before cargo runs.
-      - name: Build frontend
-        run: npm run build
-
-      - name: cargo check
+      # Lints before the long build, so a style regression costs two minutes
+      # instead of fifteen. `--all-targets` also compiles the test targets,
+      # which makes the separate `cargo check` step unnecessary.
+      - name: Clippy
         working-directory: src-tauri
-        run: cargo check --all-targets
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: cargo test
         working-directory: src-tauri
         # The Rust test suite is platform-independent; running it here is how a
         # Windows-only regression gets caught rather than assumed absent.
         run: cargo test
+
+      # tauri-build validates that frontendDist exists, so the web assets have
+      # to be built before cargo runs. `tauri build` would run this itself via
+      # beforeBuildCommand; doing it separately fails fast on a TypeScript error
+      # instead of after a full Rust compile.
+      - name: Build frontend
+        run: npm run build
+
+      # Picks up `tauri.windows.conf.json`, which retargets the bundle from the
+      # macOS `app`/`dmg` pair to an NSIS installer.
+      - name: Build app
+        run: npx tauri build
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: Wiki3-Windows-x64
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      # Appends the installer to the release for this tag. The macOS workflow
+      # owns creating the release; this only adds an asset, and leaves the
+      # draft flag alone so a draft stays a draft.
+      - name: Attach installer to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: src-tauri/target/release/bundle/nsis/*.exe

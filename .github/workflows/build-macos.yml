@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `devcontainer-core` is a relative path dependency pointing at a sibling
       # checkout (`../../devcontainers-cli/...`). Without this the build fails
@@ -27,7 +27,7 @@ jobs:
             "${{ github.workspace }}/../devcontainers-cli"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -38,6 +38,7 @@ jobs:
           # Both slices, because the release artifact is universal — Intel
           # Macs are supported at the 15.0 deployment target too.
           targets: aarch64-apple-darwin,x86_64-apple-darwin
+          components: clippy
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -46,6 +47,17 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # A release build is the most expensive thing this repo does, so the
+      # cheap gates run first: a lint or test failure should cost two minutes
+      # rather than a full signed, universal compile.
+      - name: Clippy
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: src-tauri
+        run: cargo test
 
       - name: Import signing certificate
         env:
@@ -106,14 +118,14 @@ jobs:
           xcrun stapler staple "$DMG_PATH"
 
       - name: Upload DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Wiki3-macOS-universal
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
