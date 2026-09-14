@@ -1,8 +1,23 @@
 name: Build macOS App
 
+# DORMANT — manual dispatch only.
+#
+# Releases are built locally instead: `./scripts/build.sh` then
+# `./scripts/notarize.sh` then `npm run release`. That path works today and
+# needs no secrets, so this workflow is parked rather than deleted — it is the
+# starting point if the whole release is ever automated.
+#
+# It cannot run as written. It wants six repository secrets that do not exist
+# (APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
+# APPLE_API_KEY, APPLE_API_KEY_CONTENT, APPLE_API_ISSUER), and its
+# certificate-import step has never executed, so having the secrets would not by
+# itself make it work. It used to trigger on `v*` tags, which meant publishing
+# any release produced a red X from a job that never had a chance of passing.
+#
+# For whoever picks this up: notarization here uses the App Store Connect API
+# key path, while `scripts/notarize.sh` uses an app-specific password. Those are
+# different credential types, so the local one cannot simply be copied in.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 env:
