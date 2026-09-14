@@ -49,9 +49,40 @@ The name will be `Developer ID Application: <Your Name> (<TEAMID>)`, which is wh
 
 ### Or import an existing `.p12`
 
-Export it *from the machine that has the private key*: Keychain Access → **My
-Certificates** (not "Certificates") → select the Developer ID Application identity →
-right-click → **Export** → `.p12` with a password. Then, here:
+There is no standard location for a `.p12` — it is not a file macOS maintains.
+The private key lives inside the old machine's *login keychain* as an opaque
+entry, and a `.p12` only exists once somebody exports it. So the first question is
+whether a `.p12` was ever exported; if not, there is nothing to copy, and you
+either export one now or create a fresh identity with Xcode above.
+
+**If you had exported one before**, it is wherever you saved it. On the old Mac:
+
+```bash
+find ~ -maxdepth 4 -name '*.p12' 2>/dev/null
+mdfind -name .p12
+```
+
+Downloads, Desktop, and any keys/secrets folder are the usual suspects; check
+1Password/Keychain notes too, since it is a credential rather than a document.
+
+**To create one now**, on the machine that has the private key:
+
+```bash
+security export -k ~/Library/Keychains/login.keychain-db \
+  -t identities -f pkcs12 -o ~/Desktop/wiki3-developer-id.p12
+```
+
+It prompts for a password to protect the export. Note that it exports **all**
+identities in the keychain, not just the Developer ID one — prefer the GUI route
+below if you want to be selective.
+
+Or precisely, via the GUI: Keychain Access → **My Certificates** (not
+"Certificates" — that category will not offer to export a private key) → select the
+Developer ID Application identity → right-click → **Export** → `.p12` with a
+password.
+
+**Transfer it over an encrypted channel** — AirDrop or a USB stick. It is your
+private key; treat it as such. Then import it here:
 
 ```bash
 security import <path-to>.p12 \
@@ -61,6 +92,9 @@ security import <path-to>.p12 \
 
 It prompts for the `.p12` password. Deliberately no `-P <password>`: that would put
 the password in your shell history and in `ps`.
+
+The same `.p12` is what CI needs, base64-encoded, as the `APPLE_CERTIFICATE` secret
+— so exporting one is worth doing regardless of which machine you build on.
 
 ### Then, the step everyone forgets
 
