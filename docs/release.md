@@ -375,17 +375,27 @@ It needs **no secrets**: there is no signing or notarization step. The installer
 is unsigned, so Windows shows a SmartScreen warning on first run, which is
 accepted for now.
 
-On a `v*` tag push it builds the NSIS installer and attaches
+On a `v*` tag push it is *intended* to build the NSIS installer and attach
 `Wiki3_<version>_x64-setup.exe` to the release. On `docker`/`main` pushes and pull
-requests it builds the same thing but uploads it as the `Wiki3-Windows-x64`
-artifact instead of touching a release.
+requests it builds the same thing and uploads it as the `Wiki3-Windows-x64` artifact
+instead of touching a release. That second path is proven — it is how the v0.6.0
+installer was produced.
 
-**Its trigger reads the workflow from the tagged commit, so where the tag points
-matters.** A tag on a commit that predates `build-windows.yml` runs nothing at all —
-no workflow file exists there to run — and adding a workflow later cannot rescue an
-already-placed tag. v0.6.0 is in exactly that position: its tag landed on `main` at
-`8809bea` (see the footgun below), which is why that release's `.exe` had to be
-built and attached by hand.
+**The tag path is unverified, and there is a trap in it worth knowing.** GitHub runs
+the workflow *files* from the tagged commit, so a tag on a commit that predates
+`build-windows.yml` runs nothing at all: the file does not exist there, and adding it
+later cannot rescue a tag that has already been placed. Both `v0.6.0` tag targets
+(`8809bea`, then `660e503` after it was corrected) predate the workflow, so this path
+has never fired once — which is why that release's `.exe` had to be attached by hand.
+
+One observation on top of that, which we have not explained: the `v0.6.0` tag pushes
+produced no run *at all* — not even the macOS workflow, even though `660e503` contains
+a `build-macos.yml` that listened for tags at the time. The likeliest reason is that
+the tag trigger is evaluated against the default branch, where that workflow is now
+parked; that would also mean parking it suppresses old tags and not just new ones.
+Either way, treat the tag path as unproven until a release is tagged from `main`, where
+`build-windows.yml` does carry the `v*` trigger. Until then, build the installer with
+`workflow_dispatch` and attach it by hand — the commands just below.
 
 To build one by hand and fetch it:
 
@@ -428,12 +438,13 @@ compiles fine here.
   `Wiki3_<version>_universal.dmg` by default. An arm64 iteration build leaves an
   `..._aarch64.dmg` that it will deliberately *not* pick up — set
   `ARCH_SUFFIX=aarch64` if that is genuinely what you mean to ship.
-- **A tag push publishes the Windows installer, but not the Mac build.** A `v*` tag
-  runs `build-windows.yml`, which attaches `Wiki3_<version>_x64-setup.exe` to the
-  release for that tag. The macOS DMG is still published locally with
+- **A tag push is meant to publish the Windows installer, but not the Mac build.** A
+  `v*` tag *should* run `build-windows.yml` and attach
+  `Wiki3_<version>_x64-setup.exe` to the release — but see "Windows installer" above,
+  because that path has never actually fired. The macOS DMG is published locally with
   `npm run release`; the parked workflow contributes nothing. Note that
-  `gh release create --draft` does **not** create the tag — publishing the draft
-  does — so the Windows build only runs once you publish.
+  `gh release create --draft` does **not** create the tag — publishing the draft does
+  — so a tag only appears once you publish.
 - **Notarization needs a network round trip to Apple** and will fail on a
   corp/VPN host that filters it; both scripts use `--wait` so the failure is at
   least explicit.

@@ -22,6 +22,15 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+# A commit that supersedes another — a follow-up push, a merge — makes the earlier
+# build pointless, since its only output is an artifact nobody will download. On
+# 2026-09-13 four near-identical NSIS builds were running at once for this reason.
+# A tag is a different ref, so a release build gets its own group and is not
+# cancelled by branch activity.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build Windows (NSIS)
