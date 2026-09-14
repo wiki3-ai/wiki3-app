@@ -17,5 +17,9 @@ export const CLONE_SOURCES: CloneSource[] = [
   { label: 'wiki3-ai / wiki3-ai-site', url: 'https://github.com/wiki3-ai/wiki3-ai-site' },
   { label: 'wiki3-ai / wiki3-ai-template', url: 'https://github.com/wiki3-ai/wiki3-ai-template' },
   { label: 'wiki3-ai / quartz', url: 'https://github.com/wiki3-ai/quartz' },
-  { label: 'wiki3-ai / nbdev', url: 'https://github.com/wiki3-ai/nbdev' }
+  { label: 'wiki3-ai / nbdev', url: 'https://github.com/wiki3-ai/nbdev' },
+  {
+    label: 'wiki3-ai / hermes-devcontainer',
+    url: 'https://github.com/wiki3-ai/hermes-devcontainer.git'
+  }
 ];
