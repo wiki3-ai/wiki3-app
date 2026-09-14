@@ -26,7 +26,16 @@ unset _wiki3_sourced
 
   cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.."
 
-  BUNDLE_DIR=src-tauri/target/aarch64-apple-darwin/release/bundle
+  # Must match what build.sh produced. Releases ship the universal build;
+  # `BUILD_KIND=arm64 ./scripts/notarize.sh` handles an arm64-only build.
+  BUILD_KIND="${BUILD_KIND:-universal}"
+  case "$BUILD_KIND" in
+    universal) TARGET_TRIPLE=universal-apple-darwin ;;
+    arm64)     TARGET_TRIPLE=aarch64-apple-darwin ;;
+    *) echo "Unknown BUILD_KIND: $BUILD_KIND (expected 'universal' or 'arm64')" >&2; exit 2 ;;
+  esac
+
+  BUNDLE_DIR=src-tauri/target/$TARGET_TRIPLE/release/bundle
   NOTARY_PROFILE="${NOTARY_PROFILE:-wiki3-notary}"
 
   APP=$(ls -d "$BUNDLE_DIR"/macos/*.app 2>/dev/null | head -1 || true)

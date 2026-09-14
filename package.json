@@ -11,6 +11,7 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "tauri:build:arm64": "tauri build --target aarch64-apple-darwin",
+    "tauri:build:universal": "tauri build --target universal-apple-darwin",
     "version:bump": "./scripts/bump-version.sh",
     "notarize": "./scripts/notarize.sh",
     "release": "./scripts/release.sh",

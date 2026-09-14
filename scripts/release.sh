@@ -42,13 +42,18 @@ if [ "$VERSION" != "$CARGO_VERSION" ] || [ "$VERSION" != "$TAURI_VERSION" ]; the
 fi
 
 # Find DMG matching this version. The bundle filename embeds the
-# version Tauri saw at build time (`Wiki3_<ver>_aarch64.dmg`), so
+# version Tauri saw at build time (`Wiki3_<ver>_<arch>.dmg`), so
 # requiring an exact match catches the "I bumped versions but didn't
 # rebuild" footgun.
-DMG=$(find src-tauri/target -name "Wiki3_${VERSION}_*.dmg" 2>/dev/null | head -1)
+#
+# Releases are universal; a leftover arm64 DMG from a local iteration
+# build must not be picked up by accident, so the arch segment is
+# matched explicitly rather than globbed.
+ARCH_SUFFIX="${ARCH_SUFFIX:-universal}"
+DMG=$(find src-tauri/target -name "Wiki3_${VERSION}_${ARCH_SUFFIX}.dmg" 2>/dev/null | head -1)
 if [ -z "$DMG" ]; then
-  echo "No DMG found for version ${VERSION}."
-  echo "Looked for: src-tauri/target/**/Wiki3_${VERSION}_*.dmg"
+  echo "No ${ARCH_SUFFIX} DMG found for version ${VERSION}."
+  echo "Looked for: src-tauri/target/**/Wiki3_${VERSION}_${ARCH_SUFFIX}.dmg"
   STALE=$(find src-tauri/target -name 'Wiki3_*.dmg' 2>/dev/null | head -3)
   if [ -n "$STALE" ]; then
     echo "Other DMGs present (stale builds):"
@@ -63,19 +68,25 @@ fi
 # `Wiki3.zip` next to it via `ditto -c -k --keepParent`. Rename
 # on upload so the asset filename is unambiguous on the release
 # page.
-APP_DIR="$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
+ARCH_SUFFIX="${ARCH_SUFFIX:-universal}"
+case "$ARCH_SUFFIX" in
+  universal) TARGET_TRIPLE=universal-apple-darwin ;;
+  aarch64)   TARGET_TRIPLE=aarch64-apple-darwin ;;
+  *) echo "Unknown ARCH_SUFFIX: $ARCH_SUFFIX (expected 'universal' or 'aarch64')" >&2; exit 2 ;;
+esac
+APP_DIR="$REPO_ROOT/src-tauri/target/$TARGET_TRIPLE/release/bundle/macos"
 SRC_ZIP="$APP_DIR/Wiki3.zip"
 if [ ! -f "$SRC_ZIP" ]; then
   echo "No notarized app zip found at $SRC_ZIP."
   echo "Run scripts/build.sh first (it produces the zip during notarization)."
   exit 1
 fi
-ZIP="$APP_DIR/Wiki3_${VERSION}_aarch64.zip"
+ZIP="$APP_DIR/Wiki3_${VERSION}_${ARCH_SUFFIX}.zip"
 cp -f "$SRC_ZIP" "$ZIP"
 
 # Check signing status
 SIGNED="unsigned"
-if CODESIGN_OUT=$(codesign -dvv "$REPO_ROOT/src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Wiki3.app" 2>&1); then
+if CODESIGN_OUT=$(codesign -dvv "$APP_DIR/Wiki3.app" 2>&1); then
   if echo "$CODESIGN_OUT" | grep -q "Authority=Developer ID"; then
     SIGNED="signed"
   fi
@@ -97,7 +108,7 @@ if gh release view "$TAG" &>/dev/null; then
   gh release upload "$TAG" "$DMG" "$ZIP" --clobber
 else
   TITLE="Wiki3 ${TAG}"
-  NOTES="macOS (Apple Silicon, Sequoia+) — ${SIGNED}"
+  NOTES="macOS (Universal — Apple Silicon and Intel, Sequoia 15.0+) — ${SIGNED}"
 
   echo "Creating release $TAG..."
   gh release create "$TAG" \

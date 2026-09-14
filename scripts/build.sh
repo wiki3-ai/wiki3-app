@@ -5,6 +5,14 @@
 # deferred), so APPLE_SIGNING_IDENTITY must be exported here.
 # Notarization + stapling + verification live in scripts/notarize.sh.
 #
+# Usage: ./scripts/build.sh [universal|arm64]
+#   universal (default) — one fat binary, runs on Apple Silicon and Intel.
+#   arm64               — Apple Silicon only; about twice as fast to build,
+#                         for iterating locally.
+#
+# Releases ship universal: Intel Macs are still supported at the 15.0
+# deployment target, and one download avoids "which Mac do I have?".
+#
 # Run as a child process: `./scripts/build.sh`. Do NOT source it.
 
 # Refuse to run when sourced, regardless of zsh vs bash.
@@ -25,7 +33,36 @@ unset _wiki3_sourced
 
   cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.."
 
-  BUNDLE_DIR=src-tauri/target/aarch64-apple-darwin/release/bundle
+  BUILD_KIND="${1:-universal}"
+  case "$BUILD_KIND" in
+    universal)
+      TARGET_TRIPLE=universal-apple-darwin
+      BUILD_SCRIPT=tauri:build:universal
+      NEEDED_TARGETS=(aarch64-apple-darwin x86_64-apple-darwin)
+      ;;
+    arm64)
+      TARGET_TRIPLE=aarch64-apple-darwin
+      BUILD_SCRIPT=tauri:build:arm64
+      NEEDED_TARGETS=(aarch64-apple-darwin)
+      ;;
+    *)
+      echo "Unknown build kind: $BUILD_KIND (expected 'universal' or 'arm64')" >&2
+      exit 2
+      ;;
+  esac
+
+  # A universal build needs both Rust std libraries; without them cargo
+  # fails deep into the build with a confusing message.
+  INSTALLED=$(rustup target list --installed)
+  for t in "${NEEDED_TARGETS[@]}"; do
+    if ! grep -qx "$t" <<<"$INSTALLED"; then
+      echo "Rust target $t is not installed. Run:" >&2
+      echo "  rustup target add $t" >&2
+      exit 1
+    fi
+  done
+
+  BUNDLE_DIR=src-tauri/target/$TARGET_TRIPLE/release/bundle
 
   # Tauri only signs the binary when APPLE_SIGNING_IDENTITY is
   # exported (tauri.conf.json sets `signingIdentity: null`). If
@@ -53,7 +90,7 @@ unset _wiki3_sourced
   # accidentally ship the old DMG.
   rm -rf "$BUNDLE_DIR"
 
-  npm run tauri:build:arm64
+  npm run "$BUILD_SCRIPT"
 
   APP=$(ls -d $BUNDLE_DIR/macos/*.app | head -1)
   DMG=$(ls -t $BUNDLE_DIR/dmg/*.dmg | head -1)
