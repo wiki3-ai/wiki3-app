@@ -64,6 +64,41 @@ including the certificate-signing-request dance, which is why it is the least
 error-prone route. The name will be `Developer ID Application: <Your Name>
 (<TEAMID>)`, which is what `build.sh` expects.
 
+### A new certificate is not the old one
+
+Creating a certificate here produces a **new key pair and a new certificate**, not a
+copy of whatever the other Mac holds. It is not the *same* certificate.
+
+It looks identical, though, because the identity string is derived from your name and
+team — `Developer ID Application: JAMES PAUL WHITE (8URBCZ87DT)` — so the serial
+number and key differ while the text does not. `find-identity` shows only the text,
+which is why this is easy to get wrong.
+
+Practically, for this project it does not matter:
+
+- Any valid *Developer ID Application* certificate for the team signs and notarizes
+  fine; Apple does not require the same one across releases.
+- **Already-released builds are unaffected.** Users' Gatekeeper checks were satisfied
+  when they downloaded, and the notarization ticket is stapled to the build, not to
+  the certificate. Nothing installed breaks.
+- The two can coexist. Signing with whichever is present is fine.
+
+It matters in two places:
+
+- **If you specifically need the previous identity** — for example to reuse a `.p12`
+  already stored somewhere, or to keep an existing CI secret valid — then export it
+  from the machine that has the key rather than creating a new one.
+- **CI secrets hold one specific `.p12`.** A newly created certificate means
+  re-exporting and replacing `APPLE_CERTIFICATE`. (Moot here: this repo currently has
+  no secrets at all.)
+
+Since both certificates share a name, the identity string cannot tell them apart. To
+see what actually signed a build:
+
+```bash
+codesign -dvvv <path-to>Wiki3.app 2>&1 | grep -E 'Authority|TeamIdentifier'
+```
+
 ### Or: create one from the portal with a CSR
 
 If you do not have Xcode, the portal route works and is the manual version of the
