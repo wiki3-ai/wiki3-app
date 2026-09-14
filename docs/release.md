@@ -38,14 +38,49 @@ catches people out: a `.cer` downloaded from developer.apple.com contains only t
 certificate, so it imports fine, shows up in Keychain Access, and still cannot sign
 anything. `security find-identity -v -p codesigning` will not list it.
 
+The portal's certificate list is therefore the wrong place to start on a new Mac —
+downloading the existing certificate onto this machine pairs it with nothing. Either
+bring the key across, or create a new pair here.
+
+### Which certificate type
+
+The page at <https://developer.apple.com/account/resources/certificates> lists
+several, and only one is right for this:
+
+- **Developer ID Application** — what you need. It is what signs an app you ship
+  outside the App Store, and what notarization accepts.
+- *Developer ID Installer* — for signing `.pkg` installers. Not this; we ship a DMG.
+- *Apple Development* / *Mac Development* — for running debug builds on your own
+  devices via Xcode. Not distributable.
+- *Apple Distribution* / *Mac Installer Distribution* — for App Store submissions.
+
 ### Easiest: let Xcode manage it
 
 Xcode → Settings → Accounts → sign in with the Apple ID → select the team →
 **Manage Certificates…** → `+` → **Developer ID Application**.
 
-This creates a fresh key pair and certificate on this machine and installs both.
-The name will be `Developer ID Application: <Your Name> (<TEAMID>)`, which is what
-`build.sh` expects.
+This creates a fresh key pair and certificate on this machine and installs both —
+including the certificate-signing-request dance, which is why it is the least
+error-prone route. The name will be `Developer ID Application: <Your Name>
+(<TEAMID>)`, which is what `build.sh` expects.
+
+### Or: create one from the portal with a CSR
+
+If you do not have Xcode, the portal route works and is the manual version of the
+above. The key is generated here and never leaves the machine:
+
+1. Keychain Access → menu **Keychain Access** → **Certificate Assistant** →
+   **Request a Certificate From a Certificate Authority…**
+2. Enter your Apple ID email, leave *CA Email Address* blank, choose **Saved to
+   disk**, and save the `.certSigningRequest`.
+3. On the portal, **create** a new **Developer ID Application** certificate (not
+   download an existing one) and upload that CSR.
+4. Download the resulting `.cer` and double-click it to import.
+
+It pairs automatically with the private key Keychain Access just created, so
+`find-identity` will list it. Apple caps how many certificates of each type an
+account can hold; if the portal refuses, revoke an unused one rather than deleting
+anything locally.
 
 ### Or import an existing `.p12`
 
