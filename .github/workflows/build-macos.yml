@@ -16,6 +16,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `devcontainer-core` is a relative path dependency pointing at a sibling
+      # checkout (`../../devcontainers-cli/...`). Without this the build fails
+      # before it starts, with "failed to get `devcontainer-core` as a
+      # dependency" — which is what this workflow has been doing.
+      - name: Checkout devcontainer-core (sibling path dependency)
+        run: |
+          git clone --depth 1 --branch docker-runtime \
+            https://github.com/wiki3-ai/devcontainers-cli.git \
+            "${{ github.workspace }}/../devcontainers-cli"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:

@@ -29,6 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `devcontainer-core` is a relative path dependency pointing at a sibling
+      # checkout (`../../devcontainers-cli/...`), so CI has to reproduce that
+      # layout or cargo cannot even resolve the manifest. This is why no CI
+      # build of this app has ever worked, macOS included.
+      - name: Checkout devcontainer-core (sibling path dependency)
+        run: |
+          git clone --depth 1 --branch docker-runtime \
+            https://github.com/wiki3-ai/devcontainers-cli.git \
+            "${{ github.workspace }}/../devcontainers-cli"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
