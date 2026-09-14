@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
+use crate::util::non_blank;
 use crate::wiki::types::*;
 use crate::workspace::manager::WorkspaceManager;
 use crate::workspace::types::{RepoVisibility, Workspace};
@@ -161,18 +162,16 @@ impl WikiManager {
             w.name = name;
         }
         if let Some(lp) = patch.local_path {
-            w.local_path = lp.filter(|s| !s.trim().is_empty());
+            w.local_path = non_blank(lp);
         }
         if let Some(ru) = patch.remote_url {
-            w.remote = ru
-                .and_then(|u| if u.trim().is_empty() { None } else { Some(u) })
-                .and_then(|u| remote_from_url(&u));
+            w.remote = non_blank(ru).and_then(|u| remote_from_url(&u));
         }
         if let Some(s) = patch.site_url {
-            w.site_url = s.filter(|v| !v.trim().is_empty());
+            w.site_url = non_blank(s);
         }
         if let Some(d) = patch.description {
-            w.description = d.filter(|v| !v.is_empty());
+            w.description = non_blank(d);
         }
         if let Some(b) = patch.publish_on_commit {
             w.publish_on_commit = b;
@@ -190,13 +189,8 @@ impl WikiManager {
     /// Convenience: build a new wiki from free-form params.
     pub fn build_from_params(&self, params: AddWikiParams) -> Result<Wiki, WikiError> {
         let remote = params.remote_url.as_deref().and_then(remote_from_url);
-        let local_path =
-            params
-                .local_path
-                .and_then(|p| if p.trim().is_empty() { None } else { Some(p) });
-        let site_url = params
-            .site_url
-            .and_then(|p| if p.trim().is_empty() { None } else { Some(p) });
+        let local_path = non_blank(params.local_path);
+        let site_url = non_blank(params.site_url);
 
         if local_path.is_none() && remote.is_none() && site_url.is_none() {
             return Err(WikiError::Invalid(
@@ -204,12 +198,9 @@ impl WikiManager {
             ));
         }
 
-        let name = params
-            .name
-            .filter(|n| !n.trim().is_empty())
-            .unwrap_or_else(|| {
-                Wiki::derive_name(local_path.as_deref(), remote.as_ref(), site_url.as_deref())
-            });
+        let name = non_blank(params.name).unwrap_or_else(|| {
+            Wiki::derive_name(local_path.as_deref(), remote.as_ref(), site_url.as_deref())
+        });
 
         let now = Utc::now();
         Ok(Wiki {

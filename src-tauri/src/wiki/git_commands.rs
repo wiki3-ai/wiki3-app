@@ -12,6 +12,7 @@ use tauri::{command, AppHandle, Manager};
 use crate::git::ops as git;
 use crate::providers::github::auth::GitHubAuth;
 use crate::publishing_commands::PublishingState;
+use crate::util::non_blank;
 use crate::wiki::commands::WikiState;
 use crate::wiki::types::Wiki;
 use crate::workspace::types::{GitStatus, PushResult};
@@ -29,10 +30,7 @@ fn get_wiki(app: &AppHandle, wiki_id: &str) -> Result<Wiki, String> {
 }
 
 fn require_local(wiki: &Wiki) -> Result<String, String> {
-    wiki.local_path
-        .clone()
-        .filter(|p| !p.trim().is_empty())
-        .ok_or_else(|| "This wiki has no local path".to_string())
+    non_blank(wiki.local_path.clone()).ok_or_else(|| "This wiki has no local path".to_string())
 }
 
 /// Get git status for the wiki's local path.

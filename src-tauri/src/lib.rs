@@ -11,6 +11,7 @@ pub mod publishing_commands;
 pub mod runtime_commands;
 pub mod tauri_sink;
 pub mod tools;
+pub mod util;
 pub mod wiki;
 pub mod window_state;
 pub mod workspace;

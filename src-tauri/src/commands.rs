@@ -6,6 +6,7 @@ use tauri::{command, AppHandle, Manager, State};
 use crate::config;
 use crate::host::DesktopHostState;
 use crate::permissions::PermissionChoice;
+use crate::util::non_blank;
 use crate::window_state::{
     AppSettings, DashboardGeometry, TrackedWindowInfo, WindowGeometry, WindowStateManager,
 };
@@ -227,7 +228,7 @@ pub fn open_new_window_with_geometry(
     let n = WINDOW_COUNTER.fetch_add(1, Ordering::Relaxed);
     let label = format!("wiki3-{}", n);
 
-    let title = format!("Wiki3 — {}", &url);
+    let title = format!("Wiki3 — {}", url);
 
     let w = width.unwrap_or(1280.0);
     let h = height.unwrap_or(800.0);
@@ -492,7 +493,7 @@ pub fn update_settings(
         settings.default_repo_url = v;
     }
     if let Some(v) = default_wikis_dir {
-        settings.default_wikis_dir = if v.trim().is_empty() { None } else { Some(v) };
+        settings.default_wikis_dir = non_blank(Some(v));
     }
     let result = settings.clone();
     drop(settings);
