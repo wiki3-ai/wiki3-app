@@ -83,12 +83,12 @@ TypeScript modules for desktop integration and publishing UI:
 ## Features
 
 - **Dashboard**: List of wiki cards, each with links (local / remote / site), action buttons, and window tracking. New wikis appear at the top and can be dragged to reorder.
-- **Per-wiki Git & Push**: Local repos expose Commit, Push, Pull, Publish, Build, Serve, and Site buttons. The commit dialog has an "Also publish" option, and each wiki has a persistent **Publish on Commit** checkbox so one click can do commit + push.
-- **Build**: Runs `jupyter lite build` inside Apple Container (or on the host as a fallback) to produce the static `_output/`.
-- **Serve / Stop**: Starts (or stops) a per-wiki preview container that runs `jupyter lite serve` and a watch loop. The build is included in the serve startup, so you don't need to click Build first — but Build is handy when you just want to refresh the static output without serving it.
-- **Site**: When the wiki has a configured `site_url` (e.g. a GitHub Pages URL), opens it in your default OS browser. When the wiki only has a local preview, the per-port URL row on the card opens the running container's port (e.g. `http://localhost:8000/`) in a new in-app window. The dashboard waits until the port poller has confirmed the port is actually answering HTTP before showing the URL as live — see [docs/networking.md](docs/networking.md) for the full path-selection logic, including the in-process TCP forwarder that handles hosts where Apple Container's loopback publish-proxy is broken.
+- **Per-wiki Git & Push**: Local repos expose Commit, Push, Pull, Publish and Site buttons. The commit dialog has an "Also publish" option, and each wiki has a persistent **Publish on Commit** checkbox so one click can do commit + push.
+- **Container**: Each card starts / stops / restarts / rebuilds / removes the wiki's devcontainer through `devcontainer-core`, which can drive Docker, Podman or Apple Containers — chosen from the **Runtime** control in the action row, or left on Automatic. Rebuild recreates the container from the current `devcontainer.json`, so in-container state is lost.
+- **Site**: When the wiki has a configured `site_url` (e.g. a GitHub Pages URL), opens it in your default OS browser. The per-port rows on the card open the running container's forwarded ports (e.g. `http://localhost:8000/`) in a new in-app window. The dashboard waits until the port poller has confirmed the port is actually answering HTTP before showing the URL as live — see [docs/networking.md](docs/networking.md) for the full path-selection logic, including the in-process TCP forwarder that handles hosts where Apple Container's loopback publish-proxy is broken.
 - **Diagnose…**: Per-wiki action that runs a network/container/process diagnostic and writes a timestamped report to `~/Library/Logs/ai.wiki3.studio/wiki3-diagnostics-<stamp>.txt`. Useful for filing bugs about port reachability or container lifecycle issues; full schema in [docs/networking.md](docs/networking.md#diagnostics).
-- **Autostart Container**: Per-wiki checkbox. When set, the preview container starts automatically on app launch.
+- **Autostart Container**: Per-wiki checkbox. When set, the container starts when the dashboard loads.
+- **Releases**: Signed, notarized macOS (Apple Silicon) builds. See [docs/release.md](docs/release.md) for the build → notarize → publish process.
 - **Add Wiki / Clone / Open Local**: File-dialog driven flows defaulting to `~/Wiki3`. Wikis are loose records — any combination of local path / remote / site URL is valid.
 - **Seeded Defaults**: First launch seeds `wiki3-ai/wiki3-ai-site` and `wiki3-ai/wiki3-ai-template`. Removing a default does not re-seed it.
 - **Window Tracking**: Site windows opened from a wiki card are tagged to that wiki, shown in an expandable list, and can be Close All / Reopen All together. Geometry is preserved across close/reopen.
@@ -127,12 +127,31 @@ Each wiki card on the dashboard exposes a set of buttons driven by which of the 
 - When checked, the commit dialog pre-checks "Also publish" so a single click does commit + push.
 - The flag is persisted on the wiki record (`publish_on_commit: bool`) via `set_wiki_publish_on_commit`.
 
-### Build / Serve / Site
+### Container controls
 
-- **Build** runs `jupyter lite build` (inside Apple Container if the repo has a `.devcontainer/`, otherwise on the host).
-- **Serve** starts a per-wiki preview container that runs `jupyter lite serve` (with the build included on startup) and a polling watch loop that rebuilds when content changes. **Stop** tears the container down.
-- **Site** opens the wiki's configured site URL externally (when set). The per-port URL row that appears once `Serve` is running opens the local preview in an in-app window instead — picked from a path the port poller has actually verified. The exact selection logic (loopback / direct vmnet / in-process forwarder) lives in [docs/networking.md](docs/networking.md).
-- **Autostart Container** is a per-wiki checkbox that re-starts the preview container on app launch.
+Each wiki card with a local path has a container row driven by the **devcontainer
+lifecycle** in `devcontainer-core`, rather than a per-wiki build:
+
+- **Start** brings the wiki's devcontainer up (`wiki_container_ctl_up`), adopting an
+existing container if one is already there.
+- **Stop / Restart / Rebuild / Remove** act on that container. Rebuild recreates it from
+the current `devcontainer.json`, so in-container state is lost.
+- **Cancel** appears while a lifecycle hook (e.g. a slow `postCreateCommand`) is in
+flight and kills it.
+- **Runtime**, in the action row, chooses the engine — Docker, Podman or Apple
+Containers — or leaves it on **Automatic** (first installed of Docker, then Podman,
+then Apple Containers). The choice is global and is remembered across restarts.
+- **Site** opens the wiki's configured site URL externally (when set). The per-port rows
+open the local preview instead, and a port only turns green once the poller has verified
+a path that actually answers. That selection logic (loopback / direct vmnet / in-process
+forwarder) lives in [docs/networking.md](docs/networking.md).
+- **Autostart Container** is a per-wiki checkbox that starts the container when the
+dashboard loads.
+
+Port rows come from the config the dashboard submitted for that container, so they
+describe what it was actually created from rather than a `devcontainer.json` you are
+part-way through editing. The card shows a rebuild banner when the file drifts from the
+running container.
 
 ### Planned follow-ups (not in this release)
 
@@ -140,7 +159,7 @@ The following pieces of the "local wiki as a live editing surface" vision need m
 
 - **WebStorage ↔ local-file sync** — syncing notebook/markdown edits made in JupyterLite's IndexedDB/localStorage back to the wiki's local repo so they can be committed. This needs a coordinated change in the `wiki3-ai-site` repo's contents manager to route reads/writes through the desktop host bridge (see `src/lib/bridge.ts`).
 
-The local preview server itself is **already in place**: each wiki's `Serve` button starts an Apple Container running JupyterLite with `--publish 8000:8000`, and a per-wiki port poller resolves a browser-safe loopback URL (falling back to an in-process TCP forwarder on hosts where Apple Container's publish-proxy is broken). See [docs/networking.md](docs/networking.md) for the full design and the corner cases we now handle.
+The local preview server itself is **already in place**: starting a wiki runs whatever its `devcontainer.json` specifies, and a per-wiki port poller resolves a browser-safe loopback URL (falling back to an in-process TCP forwarder on hosts where Apple Container's publish-proxy is broken). See [docs/networking.md](docs/networking.md) for the full design and the corner cases we now handle.
 
 The backend foundation for the WebStorage-sync follow-up (per-wiki git operations tied to a `local_path`) is already in place in this PR.
 
