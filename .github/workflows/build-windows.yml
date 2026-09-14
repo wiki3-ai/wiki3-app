@@ -1,0 +1,62 @@
+name: Build Windows App
+
+# No secrets required: this job exists to answer "does the app build for
+# Windows at all?", which cannot be determined from a Mac. A cross-compiled
+# `cargo check` on macOS stops at the build script, which needs a Windows
+# resource compiler; the only honest way to find the macOS-specific code is to
+# compile on Windows.
+#
+# It starts as a `cargo check` because that enumerates every error in one run
+# and costs a couple of minutes, rather than the full bundling path. Once it is
+# green the build step should become `npx tauri build`, producing the NSIS
+# installer configured in `tauri.windows.conf.json`.
+on:
+  push:
+    branches: [docker, main]
+  pull_request:
+    branches: [docker, main]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: cargo check (Windows)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install dependencies
+        run: npm ci
+
+      # tauri-build validates that frontendDist exists, so the web assets have
+      # to be built before cargo runs.
+      - name: Build frontend
+        run: npm run build
+
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+
+      - name: cargo test
+        working-directory: src-tauri
+        # The Rust test suite is platform-independent; running it here is how a
+        # Windows-only regression gets caught rather than assumed absent.
+        run: cargo test
