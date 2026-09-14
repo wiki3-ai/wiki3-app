@@ -191,6 +191,14 @@ security set-key-partition-list -S apple-tool:,apple: -s \
 It prompts for your login password. (`build-macos.yml` runs the equivalent step in
 CI.)
 
+**Do this unconditionally — do not try to prove it unnecessary.** Importing with
+`-T /usr/bin/codesign` looks like it makes this redundant, and a quick check can
+appear to confirm that: signing a throwaway file with `codesign -s <identity>` will
+succeed. Signing a full `.app` bundle then fails with `errSecInternalComponent`
+anyway. That is exactly what happened here — a passing probe is not evidence, because
+a one-off signing operation can succeed on an ACL grant that does not persist to the
+next one.
+
 ### Verify
 
 ```bash
