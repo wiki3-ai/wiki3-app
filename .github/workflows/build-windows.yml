@@ -25,6 +25,13 @@ jobs:
     name: cargo check (Windows)
     runs-on: windows-latest
     timeout-minutes: 45
+    defaults:
+      run:
+        # The default on Windows runners is PowerShell, where a trailing `\` is
+        # not a line continuation — it gets treated as a literal argument and
+        # the next line is executed as its own command. Git Bash is present, so
+        # use it rather than writing PowerShell-specific multi-line commands.
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
