@@ -163,6 +163,17 @@ security import <path-to>.p12 \
 It prompts for the `.p12` password. Deliberately no `-P <password>`: that would put
 the password in your shell history and in `ps`.
 
+**Do not file it under `~/.ssh`.** That is where a `.p12` tends to get dropped,
+because it is the directory people think of for keys — but it is a *signing* key
+with nothing to do with SSH, the name invites exactly that confusion, and anything
+that backs up or audits `~/.ssh` will pick it up. Put it somewhere deliberate, or
+delete it once it is in the keychain and re-export when CI needs it. Check it is
+what you think it is before importing:
+
+```bash
+xxd -l 16 <path-to>.p12      # PKCS#12 starts with 3082 (DER SEQUENCE)
+```
+
 The same `.p12` is what CI needs, base64-encoded, as the `APPLE_CERTIFICATE` secret
 — so exporting one is worth doing regardless of which machine you build on.
 
