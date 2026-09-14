@@ -4,9 +4,13 @@
 //! clone, fork, open local repo, open site from URL). View actions
 //! control dashboard visibility and per-wiki window groups.
 
+// `AboutMetadata` is only consumed by the macOS application submenu below —
+// on other platforms the About panel is built from `PredefinedMenuItem`, so
+// importing it unconditionally is a dead import that `-D warnings` rejects.
+#[cfg(target_os = "macos")]
+use tauri::menu::AboutMetadata;
 use tauri::menu::{
-    AboutMetadata, Menu, MenuBuilder, MenuEvent, MenuItemBuilder, PredefinedMenuItem,
-    SubmenuBuilder,
+    Menu, MenuBuilder, MenuEvent, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindowBuilder};
 
