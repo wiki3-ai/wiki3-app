@@ -92,11 +92,22 @@ export class PermissionDialog {
     // Wire up button handlers
     const buttons = overlay.querySelectorAll<HTMLButtonElement>('[data-choice]');
     buttons.forEach((button) => {
-      button.addEventListener('click', async () => {
+      button.addEventListener('click', () => {
         const choice = button.dataset.choice as PermissionChoice;
-        await this.extension.requestPermission(choice);
-        this.dismiss();
-        onChoice(choice);
+        // The listener cannot be `async` itself — `addEventListener` expects a
+        // `void` return — so own the promise explicitly. Previously the
+        // rejection was unhandled, which meant a failed choice made the click
+        // appear to do nothing at all.
+        void this.extension.requestPermission(choice).then(
+          () => {
+            this.dismiss();
+            onChoice(choice);
+          },
+          (err: unknown) => {
+            // Leave the dialog up so the user can try again, but say so.
+            console.error('Failed to record permission choice:', err);
+          },
+        );
       });
     });
 

@@ -12,14 +12,12 @@
     "noEmit": true,
     "jsx": "preserve",
     "lib": ["ES2021", "DOM", "DOM.Iterable"],
-    "outDir": "dist",
-    "rootDir": "src",
     "baseUrl": ".",
     "ignoreDeprecations": "5.0",
     "paths": {
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "vite.config.ts", "vitest.config.ts"],
   "exclude": ["node_modules", "dist", "src-tauri"]
 }

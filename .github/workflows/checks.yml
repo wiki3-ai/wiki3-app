@@ -1,0 +1,42 @@
+name: Checks
+
+# The frontend gates: lint, typecheck and unit tests. These need no Rust
+# toolchain and no sibling checkout, so they run on a plain Linux runner and
+# finish in about a minute — fast enough to be the first thing a pull request
+# reports back on.
+#
+# The Rust side is gated in the platform workflows instead, because compiling
+# for Windows and compiling for macOS are genuinely different jobs.
+on:
+  push:
+    branches: [docker, main]
+  pull_request:
+    branches: [docker, main]
+  workflow_dispatch:
+
+jobs:
+  frontend:
+    name: Lint, typecheck, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test

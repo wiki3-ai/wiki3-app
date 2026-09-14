@@ -20,6 +20,7 @@ function mk(id: string): Wiki {
     created_at: '2026-04-20T00:00:00Z',
     last_opened_at: '2026-04-20T00:00:00Z',
     publish_on_commit: false,
+    autostart_container: false,
   };
 }
 

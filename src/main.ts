@@ -135,6 +135,45 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Render a rejected command as text.
+ *
+ * `catch` binds its variable as `unknown`, and the Rust commands all return
+ * `Result<T, String>`, so a rejection is almost always a plain string that
+ * should pass through unchanged. Anything else — an `Error`, or an object
+ * carrying a `message` — gets unwrapped rather than shown as `[object
+ * Object]`, which is what a bare `${err}` would have produced for it.
+ */
+function errorText(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (err instanceof Error) return err.message;
+  if (err && typeof err === 'object' && 'message' in err) {
+    return String(err.message);
+  }
+  return String(err);
+}
+
+/**
+ * Register an async event listener.
+ *
+ * `addEventListener` expects a handler that returns nothing; an async function
+ * returns a promise instead. The handler still runs synchronously up to its
+ * first `await`, so `preventDefault` behaves as before, but a rejection would
+ * otherwise become an unhandled rejection that nothing reports. This wrapper
+ * is the single place that decides what happens to one.
+ */
+function onAsync(
+  el: HTMLElement,
+  type: keyof HTMLElementEventMap,
+  handler: (ev: Event) => Promise<void>,
+): void {
+  el.addEventListener(type, (ev) => {
+    handler(ev).catch((err: unknown) => {
+      console.error(`Unhandled error in ${String(type)} handler: ${errorText(err)}`);
+    });
+  });
+}
+
 function windowsForWiki(wikiId: string): TrackedWindowInfo[] {
   return trackedWindows.filter((w) => w.wiki_id === wikiId);
 }
@@ -615,7 +654,7 @@ async function openCloneDialog(): Promise<void> {
   });
 
   form.querySelector('[data-act="cancel"]')!.addEventListener('click', () => dlg.remove());
-  form.querySelector('[data-act="pick"]')!.addEventListener('click', async () => {
+  onAsync(form.querySelector('[data-act="pick"]') as HTMLElement, 'click', async () => {
     try {
       const picked = await wikiApi.pickFolder(parentInput.value || defaultBase);
       if (picked) parentInput.value = picked;
@@ -624,7 +663,7 @@ async function openCloneDialog(): Promise<void> {
     }
   });
 
-  form.addEventListener('submit', async (e) => {
+  onAsync(form, 'submit', async (e) => {
     e.preventDefault();
     const url = urlInput.value.trim();
     const parent = parentInput.value.trim();
@@ -642,7 +681,7 @@ async function openCloneDialog(): Promise<void> {
       await refresh();
     } catch (err) {
       status.classList.add('w3-error');
-      status.textContent = `Clone failed: ${err}`;
+      status.textContent = `Clone failed: ${errorText(err)}`;
       submitBtn.disabled = false;
     }
   });
@@ -656,7 +695,7 @@ async function openLocalRepoDialog(): Promise<void> {
     await wikiApi.openLocalRepoAsWiki(picked);
     await refresh();
   } catch (err) {
-    alert(`Could not open: ${err}`);
+    alert(`Could not open: ${errorText(err)}`);
   }
 }
 
@@ -665,8 +704,12 @@ async function openCommitDialog(wikiId: string): Promise<void> {
   if (!w) return;
 
   // Best-effort: show current git status so the user can sanity-check.
-  let statusText = 'Loading status…';
-  let hasChanges: boolean | null = null;
+  //
+  // Both are assigned on every path below — by one of the status branches, or
+  // by the `catch` — so the "Loading status…" placeholder this used to start
+  // from was never actually rendered.
+  let statusText: string;
+  let hasChanges: boolean | null;
   try {
     const s = await wikiApi.wikiGitStatus(wikiId);
     const dirty = s.dirty_files.length + s.staged_files.length + s.untracked_files.length;
@@ -709,7 +752,7 @@ async function openCommitDialog(wikiId: string): Promise<void> {
   const form = dlg.querySelector('#commit-form') as HTMLFormElement;
   const status = dlg.querySelector('#commit-status') as HTMLElement;
   form.querySelector('[data-act="cancel"]')!.addEventListener('click', () => dlg.remove());
-  form.addEventListener('submit', async (e) => {
+  onAsync(form, 'submit', async (e) => {
     e.preventDefault();
     const fd = new FormData(form);
     const message = (fd.get('message') as string) || '';
@@ -747,7 +790,7 @@ async function openUrlDialog(): Promise<void> {
     try {
       await wikiApi.openWikiSite(wiki.id);
     } catch (err) {
-      alert(`Failed to open: ${err}`);
+      alert(`Failed to open: ${errorText(err)}`);
     }
     return;
   }
@@ -757,7 +800,7 @@ async function openUrlDialog(): Promise<void> {
     await refresh();
     await wikiApi.openWikiSite(wiki.id);
   } catch (err) {
-    alert(`Could not add/open: ${err}`);
+    alert(`Could not add/open: ${errorText(err)}`);
   }
 }
 
@@ -828,7 +871,7 @@ async function openToolsDialog(): Promise<void> {
       .forEach((b) => (b.disabled = busy));
   };
 
-  body.addEventListener('click', async (e) => {
+  onAsync(body, 'click', async (e) => {
     // Clickable external links: <a target="_blank"> doesn't work in
     // the Tauri WebView, so we route URLs through the backend's
     // `open_url` command (which calls `/usr/bin/open`).
@@ -1054,11 +1097,9 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           } catch {
             /* reveal is best-effort; the path is still in the alert */
           }
-          // eslint-disable-next-line no-alert
           alert(`Diagnostic report saved to:\n${path}`);
         } catch (e) {
-          // eslint-disable-next-line no-alert
-          alert(`Diagnostic report failed: ${e}`);
+          alert(`Diagnostic report failed: ${errorText(e)}`);
         }
         break;
       }
@@ -1137,7 +1178,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           await refresh();
           alert('Pushed to origin.');
         } catch (err) {
-          alert(`Publish failed: ${err}`);
+          alert(`Publish failed: ${errorText(err)}`);
         }
         break;
       }
@@ -1147,7 +1188,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           alert(`Pulled:\n${msg}`);
           await refresh();
         } catch (err) {
-          alert(`Pull failed: ${err}`);
+          alert(`Pull failed: ${errorText(err)}`);
         }
         break;
       case 'container-up':
@@ -1158,7 +1199,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           const s = await wikiApi.wikiContainerCtlUp(id);
           containerCtlStatuses.set(id, s);
         } catch (err) {
-          alert(`Start failed: ${err}`);
+          alert(`Start failed: ${errorText(err)}`);
         } finally {
           containerCtlInFlight.delete(id);
           render();
@@ -1170,7 +1211,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           containerCtlStatuses.set(id, s);
           render();
         } catch (err) {
-          alert(`Stop failed: ${err}`);
+          alert(`Stop failed: ${errorText(err)}`);
         }
         break;
       case 'container-restart':
@@ -1181,7 +1222,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           const s = await wikiApi.wikiContainerCtlRestart(id);
           containerCtlStatuses.set(id, s);
         } catch (err) {
-          alert(`Restart failed: ${err}`);
+          alert(`Restart failed: ${errorText(err)}`);
         } finally {
           containerCtlInFlight.delete(id);
           render();
@@ -1196,7 +1237,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           const s = await wikiApi.wikiContainerCtlRebuild(id);
           containerCtlStatuses.set(id, s);
         } catch (err) {
-          alert(`Rebuild failed: ${err}`);
+          alert(`Rebuild failed: ${errorText(err)}`);
         } finally {
           containerCtlInFlight.delete(id);
           render();
@@ -1212,7 +1253,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
             render();
           }
         } catch (err) {
-          alert(`Cancel failed: ${err}`);
+          alert(`Cancel failed: ${errorText(err)}`);
         }
         break;
       case 'container-remove':
@@ -1222,7 +1263,7 @@ async function handleAction(target: HTMLElement, ev: Event): Promise<void> {
           containerCtlStatuses.set(id, s);
           render();
         } catch (err) {
-          alert(`Remove failed: ${err}`);
+          alert(`Remove failed: ${errorText(err)}`);
         }
         break;
       case 'toggle-publish-on-commit': {
