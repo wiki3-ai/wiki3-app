@@ -1236,9 +1236,18 @@ mod tests {
 
         assert!(same_path(real_str, &real));
         // A runtime may well report the same directory with a trailing
-        // slash, and the wiki's stored path can differ by a symlinked
+        // separator, and the wiki's stored path can differ by a symlinked
         // prefix, so the comparison must not be a naive string equality.
-        assert!(same_path(&format!("{real_str}/"), &real), "trailing slash");
+        //
+        // The separator has to come from the platform. On Windows
+        // `canonicalize` returns a verbatim path (`\\?\C:\...`), and inside a
+        // verbatim path `/` is an ordinary character rather than a separator —
+        // so appending one names a component that does not exist and the
+        // comparison correctly reports a mismatch.
+        assert!(
+            same_path(&format!("{real_str}{}", std::path::MAIN_SEPARATOR), &real),
+            "trailing separator"
+        );
         assert!(!same_path("/definitely/not/a/real/path", &real));
     }
 
