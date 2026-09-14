@@ -31,6 +31,84 @@ not a "fix the script" problem.
 for iterating locally. That is not a release artifact — `release.sh` will not find
 the DMG it produces (see below).
 
+## Setting up a new Mac
+
+Signing needs a **certificate *and its private key***. This is the part that
+catches people out: a `.cer` downloaded from developer.apple.com contains only the
+certificate, so it imports fine, shows up in Keychain Access, and still cannot sign
+anything. `security find-identity -v -p codesigning` will not list it.
+
+### Easiest: let Xcode manage it
+
+Xcode → Settings → Accounts → sign in with the Apple ID → select the team →
+**Manage Certificates…** → `+` → **Developer ID Application**.
+
+This creates a fresh key pair and certificate on this machine and installs both.
+The name will be `Developer ID Application: <Your Name> (<TEAMID>)`, which is what
+`build.sh` expects.
+
+### Or import an existing `.p12`
+
+Export it *from the machine that has the private key*: Keychain Access → **My
+Certificates** (not "Certificates") → select the Developer ID Application identity →
+right-click → **Export** → `.p12` with a password. Then, here:
+
+```bash
+security import <path-to>.p12 \
+  -k ~/Library/Keychains/login.keychain-db \
+  -T /usr/bin/codesign -T /usr/bin/security
+```
+
+It prompts for the `.p12` password. Deliberately no `-P <password>`: that would put
+the password in your shell history and in `ps`.
+
+### Then, the step everyone forgets
+
+`codesign` needs non-interactive access to the private key. Without this, signing
+works when you run it by hand and fails from a script or CI with an
+`errSecInternalComponent` / "user interaction is not allowed" error:
+
+```bash
+security set-key-partition-list -S apple-tool:,apple: -s \
+  ~/Library/Keychains/login.keychain-db
+```
+
+It prompts for your login password. (`build-macos.yml` runs the equivalent step in
+CI.)
+
+### Verify
+
+```bash
+security find-identity -v -p codesigning
+```
+
+You want a line ending in `"Developer ID Application: <Your Name> (<TEAMID>)"`. If
+that prints `0 valid identities found`, `build.sh` will refuse to run — correctly,
+because Tauri would otherwise bundle an unsigned app that notarization later
+rejects.
+
+If your identity string differs from the default in `build.sh`, override it rather
+than editing the script:
+
+```bash
+APPLE_SIGNING_IDENTITY="Developer ID Application: ..." ./scripts/build.sh
+```
+
+### The notary credential is separate
+
+Signing and notarizing use different credentials, and a new machine needs the second
+one too. Create an app-specific password at <https://appleid.apple.com> → Sign-In and
+Security → App-Specific Passwords, then:
+
+```bash
+xcrun notarytool store-credentials wiki3-notary \
+  --apple-id "<your-apple-id>" --team-id <TEAMID>
+```
+
+It prompts for the app-specific password, and stores it in the keychain.
+`notarize.sh` reads the profile named `wiki3-notary` (override with
+`NOTARY_PROFILE=<name>`).
+
 ## The version has to agree in five places
 
 `release.sh` refuses to publish unless they match, precisely because the DMG
